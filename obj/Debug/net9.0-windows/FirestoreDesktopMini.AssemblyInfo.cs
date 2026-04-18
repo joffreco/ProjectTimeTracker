@@ -10,12 +10,12 @@
 using System;
 using System.Reflection;
 
-[assembly: System.Reflection.AssemblyCompanyAttribute("FirestoreDesktopMini")]
+[assembly: System.Reflection.AssemblyCompanyAttribute("ProjectTimeTracker")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+42d256478748d927a033dedca944cd6f800a5b1b")]
-[assembly: System.Reflection.AssemblyProductAttribute("FirestoreDesktopMini")]
-[assembly: System.Reflection.AssemblyTitleAttribute("FirestoreDesktopMini")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+40d3564c4a84506d3bae531e2553d9e64a892697")]
+[assembly: System.Reflection.AssemblyProductAttribute("ProjectTimeTracker")]
+[assembly: System.Reflection.AssemblyTitleAttribute("ProjectTimeTracker")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
 [assembly: System.Runtime.Versioning.TargetPlatformAttribute("Windows7.0")]
 [assembly: System.Runtime.Versioning.SupportedOSPlatformAttribute("Windows7.0")]

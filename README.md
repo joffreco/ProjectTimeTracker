@@ -29,7 +29,7 @@ dotnet run --project .\FirestoreDesktopMini.csproj
 
 - On first connect, a browser sign-in/consent screen appears.
 - OAuth tokens are cached in:
-  - `%LOCALAPPDATA%\FirestoreDesktopMini.Auth`
+  - `%LOCALAPPDATA%\ProjectTimeTracker.Auth`
 - Default collection name is `demo`.
 
 ## Troubleshooting

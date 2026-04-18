@@ -1068,9 +1068,9 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\Joff\\source\\repos\\ProjectTimeTracker\\FirestoreDesktopMini.csproj",
-      "projectName": "FirestoreDesktopMini",
-      "projectPath": "C:\\Users\\Joff\\source\\repos\\ProjectTimeTracker\\FirestoreDesktopMini.csproj",
+      "projectUniqueName": "C:\\Users\\Joff\\source\\repos\\ProjectTimeTracker\\ProjectTimeTracker.csproj",
+      "projectName": "ProjectTimeTracker",
+      "projectPath": "C:\\Users\\Joff\\source\\repos\\ProjectTimeTracker\\ProjectTimeTracker.csproj",
       "packagesPath": "C:\\Users\\Joff\\.nuget\\packages\\",
       "outputPath": "C:\\Users\\Joff\\source\\repos\\ProjectTimeTracker\\obj\\",
       "projectStyle": "PackageReference",

@@ -4,7 +4,7 @@ using Google.Cloud.Firestore;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace FirestoreDesktopMini;
+namespace ProjectTimeTracker;
 
 public partial class Form1 : Form
 {
@@ -196,7 +196,7 @@ public partial class Form1 : Form
     }
 
     private static string GetTokenStorePath() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FirestoreDesktopMini.Auth");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ProjectTimeTracker.Auth");
 
     private void TryPrefillSecretPath()
     {

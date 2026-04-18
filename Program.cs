@@ -1,4 +1,4 @@
-namespace FirestoreDesktopMini;
+namespace ProjectTimeTracker;
 
 static class Program
 {
