@@ -32,12 +32,16 @@ partial class Form1
         this.txtSecretPath = new TextBox();
         this.btnBrowse = new Button();
         this.btnConnect = new Button();
-        this.lblCollection = new Label();
-        this.txtCollection = new TextBox();
-        this.btnLoadDocs = new Button();
-        this.btnAddSample = new Button();
+        this.lblProjectName = new Label();
+        this.txtProjectName = new TextBox();
+        this.btnAddProject = new Button();
+        this.btnDeleteProject = new Button();
+        this.lstProjects = new ListBox();
+        this.lblToggle = new Label();
+        this.btnNone = new Button();
+        this.flpProjectButtons = new FlowLayoutPanel();
         this.lstDocs = new ListBox();
-        this.lblStatus = new Label();
+        this.lblStatus = new TextBox();
         this.SuspendLayout();
         // 
         // lblSecret
@@ -76,81 +80,121 @@ partial class Form1
         this.btnConnect.UseVisualStyleBackColor = true;
         this.btnConnect.Click += new System.EventHandler(this.btnConnect_Click);
         // 
-        // lblCollection
+        // lblProjectName
         // 
-        this.lblCollection.AutoSize = true;
-        this.lblCollection.Location = new System.Drawing.Point(18, 80);
-        this.lblCollection.Name = "lblCollection";
-        this.lblCollection.Size = new System.Drawing.Size(93, 15);
-        this.lblCollection.TabIndex = 4;
-        this.lblCollection.Text = "Collection name";
+        this.lblProjectName.AutoSize = true;
+        this.lblProjectName.Location = new System.Drawing.Point(18, 83);
+        this.lblProjectName.Name = "lblProjectName";
+        this.lblProjectName.Size = new System.Drawing.Size(75, 15);
+        this.lblProjectName.TabIndex = 4;
+        this.lblProjectName.Text = "Project name";
         // 
-        // txtCollection
+        // txtProjectName
         // 
-        this.txtCollection.Location = new System.Drawing.Point(18, 102);
-        this.txtCollection.Name = "txtCollection";
-        this.txtCollection.Size = new System.Drawing.Size(190, 23);
-        this.txtCollection.TabIndex = 5;
-        this.txtCollection.Text = "demo";
+        this.txtProjectName.Location = new System.Drawing.Point(18, 105);
+        this.txtProjectName.Name = "txtProjectName";
+        this.txtProjectName.Size = new System.Drawing.Size(220, 23);
+        this.txtProjectName.TabIndex = 5;
         // 
-        // btnLoadDocs
+        // btnAddProject
         // 
-        this.btnLoadDocs.Location = new System.Drawing.Point(221, 101);
-        this.btnLoadDocs.Name = "btnLoadDocs";
-        this.btnLoadDocs.Size = new System.Drawing.Size(130, 25);
-        this.btnLoadDocs.TabIndex = 6;
-        this.btnLoadDocs.Text = "Load documents";
-        this.btnLoadDocs.UseVisualStyleBackColor = true;
-        this.btnLoadDocs.Click += new System.EventHandler(this.btnLoadDocs_Click);
+        this.btnAddProject.Location = new System.Drawing.Point(248, 104);
+        this.btnAddProject.Name = "btnAddProject";
+        this.btnAddProject.Size = new System.Drawing.Size(90, 25);
+        this.btnAddProject.TabIndex = 6;
+        this.btnAddProject.Text = "Add";
+        this.btnAddProject.UseVisualStyleBackColor = true;
+        this.btnAddProject.Click += new System.EventHandler(this.btnAddProject_Click);
         // 
-        // btnAddSample
+        // btnDeleteProject
         // 
-        this.btnAddSample.Location = new System.Drawing.Point(362, 101);
-        this.btnAddSample.Name = "btnAddSample";
-        this.btnAddSample.Size = new System.Drawing.Size(153, 25);
-        this.btnAddSample.TabIndex = 7;
-        this.btnAddSample.Text = "Add sample document";
-        this.btnAddSample.UseVisualStyleBackColor = true;
-        this.btnAddSample.Click += new System.EventHandler(this.btnAddSample_Click);
+        this.btnDeleteProject.Location = new System.Drawing.Point(344, 104);
+        this.btnDeleteProject.Name = "btnDeleteProject";
+        this.btnDeleteProject.Size = new System.Drawing.Size(90, 25);
+        this.btnDeleteProject.TabIndex = 7;
+        this.btnDeleteProject.Text = "Delete";
+        this.btnDeleteProject.UseVisualStyleBackColor = true;
+        this.btnDeleteProject.Click += new System.EventHandler(this.btnDeleteProject_Click);
+        // 
+        // lstProjects
+        // 
+        this.lstProjects.FormattingEnabled = true;
+        this.lstProjects.Location = new System.Drawing.Point(18, 137);
+        this.lstProjects.Name = "lstProjects";
+        this.lstProjects.Size = new System.Drawing.Size(416, 139);
+        this.lstProjects.TabIndex = 8;
+        // 
+        // lblToggle
+        // 
+        this.lblToggle.AutoSize = true;
+        this.lblToggle.Location = new System.Drawing.Point(450, 83);
+        this.lblToggle.Name = "lblToggle";
+        this.lblToggle.Size = new System.Drawing.Size(117, 15);
+        this.lblToggle.TabIndex = 9;
+        this.lblToggle.Text = "Toggle active project";
+        // 
+        // btnNone
+        // 
+        this.btnNone.Location = new System.Drawing.Point(450, 104);
+        this.btnNone.Name = "btnNone";
+        this.btnNone.Size = new System.Drawing.Size(82, 25);
+        this.btnNone.TabIndex = 10;
+        this.btnNone.Text = "None";
+        this.btnNone.UseVisualStyleBackColor = true;
+        this.btnNone.Click += new System.EventHandler(this.btnNone_Click);
+        // 
+        // flpProjectButtons
+        // 
+        this.flpProjectButtons.AutoScroll = true;
+        this.flpProjectButtons.Location = new System.Drawing.Point(538, 104);
+        this.flpProjectButtons.Name = "flpProjectButtons";
+        this.flpProjectButtons.Size = new System.Drawing.Size(424, 172);
+        this.flpProjectButtons.TabIndex = 11;
         // 
         // lstDocs
         // 
         this.lstDocs.FormattingEnabled = true;
-        this.lstDocs.Location = new System.Drawing.Point(18, 141);
+        this.lstDocs.Location = new System.Drawing.Point(18, 294);
         this.lstDocs.Name = "lstDocs";
-        this.lstDocs.Size = new System.Drawing.Size(719, 229);
-        this.lstDocs.TabIndex = 8;
+        this.lstDocs.Size = new System.Drawing.Size(944, 229);
+        this.lstDocs.TabIndex = 12;
         // 
         // lblStatus
         // 
-        this.lblStatus.AutoSize = true;
-        this.lblStatus.Location = new System.Drawing.Point(18, 386);
+        this.lblStatus.BorderStyle = BorderStyle.None;
+        this.lblStatus.Location = new System.Drawing.Point(18, 535);
+        this.lblStatus.Multiline = true;
         this.lblStatus.Name = "lblStatus";
-        this.lblStatus.Size = new System.Drawing.Size(113, 15);
-        this.lblStatus.TabIndex = 9;
+        this.lblStatus.ReadOnly = true;
+        this.lblStatus.Size = new System.Drawing.Size(944, 22);
+        this.lblStatus.TabIndex = 13;
         this.lblStatus.Text = "Select JSON to start";
         // 
         // Form1
         // 
         this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
         this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-        this.ClientSize = new System.Drawing.Size(756, 420);
+        this.ClientSize = new System.Drawing.Size(980, 565);
         this.Controls.Add(this.lblStatus);
         this.Controls.Add(this.lstDocs);
-        this.Controls.Add(this.btnAddSample);
-        this.Controls.Add(this.btnLoadDocs);
-        this.Controls.Add(this.txtCollection);
-        this.Controls.Add(this.lblCollection);
+        this.Controls.Add(this.flpProjectButtons);
+        this.Controls.Add(this.btnNone);
+        this.Controls.Add(this.lblToggle);
+        this.Controls.Add(this.lstProjects);
+        this.Controls.Add(this.btnDeleteProject);
+        this.Controls.Add(this.btnAddProject);
+        this.Controls.Add(this.txtProjectName);
+        this.Controls.Add(this.lblProjectName);
         this.Controls.Add(this.btnConnect);
         this.Controls.Add(this.btnBrowse);
         this.Controls.Add(this.txtSecretPath);
         this.Controls.Add(this.lblSecret);
-         this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle;
-         this.MaximizeBox = false;
-         this.Name = "Form1";
-         this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
-         this.Text = "ProjectTimeTracker";
-         this.ResumeLayout(false);
+        this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle;
+        this.MaximizeBox = false;
+        this.Name = "Form1";
+        this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
+        this.Text = "ProjectTimeTracker";
+        this.ResumeLayout(false);
         this.PerformLayout();
     }
 
@@ -160,10 +204,14 @@ partial class Form1
     private TextBox txtSecretPath;
     private Button btnBrowse;
     private Button btnConnect;
-    private Label lblCollection;
-    private TextBox txtCollection;
-    private Button btnLoadDocs;
-    private Button btnAddSample;
+    private Label lblProjectName;
+    private TextBox txtProjectName;
+    private Button btnAddProject;
+    private Button btnDeleteProject;
+    private ListBox lstProjects;
+    private Label lblToggle;
+    private Button btnNone;
+    private FlowLayoutPanel flpProjectButtons;
     private ListBox lstDocs;
-    private Label lblStatus;
+    private TextBox lblStatus;
 }

@@ -1,14 +1,12 @@
-# FirestoreDesktopMini
+# ProjectTimeTracker
 
-Minimal WinForms (.NET 9) desktop app that connects to Google Firestore using an OAuth Desktop Client JSON (`apps.googleusercontent.com.json`).
+Small WinForms (.NET 9) app to track your active project state (`project name` or `none`) using event sourcing.
 
-## What it does
-
-- Lets you select your OAuth desktop client JSON file.
-- Opens Google sign-in flow.
-- Connects to Firestore using your authenticated user token.
-- Lists up to 20 document IDs from a collection.
-- Adds a sample document.
+The app is append-only:
+- UI emits transition intents (`Start/Switch`, `Set none`).
+- Events are persisted locally first (offline queue).
+- A background worker syncs queued events to Firestore with exponential backoff.
+- Firestore listeners update all connected Windows PCs in near real time.
 
 ## Prerequisites
 
@@ -22,21 +20,22 @@ Minimal WinForms (.NET 9) desktop app that connects to Google Firestore using an
 ## Run
 
 ```powershell
-dotnet run --project .\FirestoreDesktopMini.csproj
+dotnet run --project .\ProjectTimeTracker.csproj
 ```
 
 ## Notes
 
 - On first connect, a browser sign-in/consent screen appears.
-- OAuth tokens are cached in:
-  - `%LOCALAPPDATA%\ProjectTimeTracker.Auth`
-- Default collection name is `demo`.
+- OAuth tokens are cached in `%LOCALAPPDATA%\ProjectTimeTracker.Auth`.
+- Local event queue is stored in `%LOCALAPPDATA%\ProjectTimeTracker\event-queue.json`.
+- Device identity is stored in `%LOCALAPPDATA%\ProjectTimeTracker\device.id`.
+- Firestore event stream path is `timeTrackerUsers/{userId}/events`.
 
 ## Troubleshooting
 
 - `project_id is missing in the JSON file`:
-  - Make sure you selected a **Desktop OAuth client** JSON.
+  - Make sure you selected a Desktop OAuth client JSON.
 - Permission errors:
-  - Grant your Google account the needed Firestore role in IAM.
-- No documents shown:
-  - Try `Add sample document`, then `Load documents`.
+  - Grant your Google account Firestore permissions in IAM.
+- Events not syncing:
+  - Keep the app running to let the background worker retry queued events.

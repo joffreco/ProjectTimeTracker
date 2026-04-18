@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "CO3TRrShH00=",
+  "dgSpecHash": "MPiw0sly1uE=",
   "success": true,
   "projectFilePath": "C:\\Users\\Joff\\source\\repos\\ProjectTimeTracker\\ProjectTimeTracker.csproj",
   "expectedPackageFiles": [
@@ -20,7 +20,8 @@
     "C:\\Users\\Joff\\.nuget\\packages\\grpc.net.client\\2.71.0\\grpc.net.client.2.71.0.nupkg.sha512",
     "C:\\Users\\Joff\\.nuget\\packages\\grpc.net.common\\2.71.0\\grpc.net.common.2.71.0.nupkg.sha512",
     "C:\\Users\\Joff\\.nuget\\packages\\microsoft.bcl.asyncinterfaces\\10.0.3\\microsoft.bcl.asyncinterfaces.10.0.3.nupkg.sha512",
-    "C:\\Users\\Joff\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\6.0.0\\microsoft.extensions.dependencyinjection.abstractions.6.0.0.nupkg.sha512",
+    "C:\\Users\\Joff\\.nuget\\packages\\microsoft.extensions.dependencyinjection\\9.0.0\\microsoft.extensions.dependencyinjection.9.0.0.nupkg.sha512",
+    "C:\\Users\\Joff\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\9.0.0\\microsoft.extensions.dependencyinjection.abstractions.9.0.0.nupkg.sha512",
     "C:\\Users\\Joff\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\6.0.0\\microsoft.extensions.logging.abstractions.6.0.0.nupkg.sha512",
     "C:\\Users\\Joff\\.nuget\\packages\\newtonsoft.json\\13.0.4\\newtonsoft.json.13.0.4.nupkg.sha512",
     "C:\\Users\\Joff\\.nuget\\packages\\system.codedom\\7.0.0\\system.codedom.7.0.0.nupkg.sha512",

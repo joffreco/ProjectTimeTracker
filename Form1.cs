@@ -1,23 +1,30 @@
-using Google.Apis.Auth.OAuth2;
-using Google.Apis.Util.Store;
-using Google.Cloud.Firestore;
+using ProjectTimeTracker.Application;
+using ProjectTimeTracker.Domain;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace ProjectTimeTracker;
 
 public partial class Form1 : Form
 {
-    private static readonly string[] FirestoreScopes = ["https://www.googleapis.com/auth/datastore"];
+    private readonly TrackerAppService _appService;
+    private readonly List<string> _projects = [];
+    private readonly Dictionary<string, Button> _projectButtons = new(StringComparer.OrdinalIgnoreCase);
+    private string? _activeProject;
 
-    private UserCredential? _userCredential;
-    private string? _projectId;
-    private FirestoreDb? _db;
+    private string ProjectsFilePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ProjectTimeTracker",
+        "projects.json");
 
-    public Form1()
+    public Form1(TrackerAppService appService)
     {
+        _appService = appService;
         InitializeComponent();
+        ConfigureTrackerUi();
         TryPrefillSecretPath();
+        LoadProjects();
+        RebuildProjectsUi();
+        _appService.StateChanged += AppServiceOnStateChanged;
     }
 
     private void btnBrowse_Click(object sender, EventArgs e)
@@ -39,9 +46,8 @@ public partial class Form1 : Form
         try
         {
             SetBusyState(true, "Opening Google sign-in...");
-            await InitializeFirestoreAsync();
-            await LoadDocumentsAsync();
-            SetBusyState(false, $"Connected to project '{_projectId}'.");
+            await _appService.ConnectAsync(txtSecretPath.Text.Trim(), "joff", CancellationToken.None);
+            SetBusyState(false, "Connected. Listening for events...");
         }
         catch (Exception ex)
         {
@@ -49,43 +55,41 @@ public partial class Form1 : Form
         }
     }
 
-    private async void btnLoadDocs_Click(object sender, EventArgs e)
+    private async void btnNone_Click(object sender, EventArgs e)
     {
         try
         {
-            SetBusyState(true, "Loading documents...");
-            await LoadDocumentsAsync();
-            SetBusyState(false, "Documents loaded.");
+            SetBusyState(true, "Switching to none...");
+            await _appService.EmitIntentAsync(StateIntent.None(), CancellationToken.None);
+            SetBusyState(false, "State changed to none.");
         }
         catch (Exception ex)
         {
-            SetBusyState(false, $"Load failed: {ex.Message}");
+            SetBusyState(false, $"Switch failed: {ex.Message}");
         }
     }
 
-    private async void btnAddSample_Click(object sender, EventArgs e)
+    private void btnAddProject_Click(object sender, EventArgs e)
     {
         try
         {
-            if (_db is null)
+            string name = txtProjectName.Text.Trim();
+            if (string.IsNullOrWhiteSpace(name))
             {
-                throw new InvalidOperationException("Connect first.");
+                throw new InvalidOperationException("Project name cannot be empty.");
             }
 
-            SetBusyState(true, "Adding sample document...");
-            await EnsureValidDbAsync();
-
-            string collectionName = GetCollectionName();
-            string id = Guid.NewGuid().ToString("N")[..8];
-            DocumentReference doc = _db!.Collection(collectionName).Document(id);
-            await doc.SetAsync(new
+            if (_projects.Any(p => string.Equals(p, name, StringComparison.OrdinalIgnoreCase)))
             {
-                createdAtUtc = DateTime.UtcNow,
-                note = "Created from FirestoreDesktopMini"
-            });
+                throw new InvalidOperationException("Project already exists.");
+            }
 
-            await LoadDocumentsAsync();
-            SetBusyState(false, $"Added document: {id}");
+            _projects.Add(name);
+            _projects.Sort(StringComparer.OrdinalIgnoreCase);
+            SaveProjects();
+            RebuildProjectsUi();
+            txtProjectName.Clear();
+            SetBusyState(false, $"Project '{name}' added.");
         }
         catch (Exception ex)
         {
@@ -93,110 +97,51 @@ public partial class Form1 : Form
         }
     }
 
-    private async Task InitializeFirestoreAsync()
+    private async void btnDeleteProject_Click(object sender, EventArgs e)
     {
-        if (!File.Exists(txtSecretPath.Text))
+        try
         {
-            throw new FileNotFoundException("Select your apps.googleusercontent.com JSON file first.");
-        }
-
-        InstalledClientConfig installed = await ReadInstalledClientConfigAsync(txtSecretPath.Text);
-        _projectId = installed.ProjectId;
-
-        if (string.IsNullOrWhiteSpace(_projectId))
-        {
-            throw new InvalidOperationException("project_id is missing in the JSON file.");
-        }
-
-        _userCredential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
-            new ClientSecrets
+            string? selected = lstProjects.SelectedItem as string;
+            if (string.IsNullOrWhiteSpace(selected))
             {
-                ClientId = installed.ClientId,
-                ClientSecret = installed.ClientSecret
-            },
-            FirestoreScopes,
-            "desktop-user",
-            CancellationToken.None,
-            new FileDataStore(GetTokenStorePath(), true));
+                throw new InvalidOperationException("Select a project to delete.");
+            }
 
-        await EnsureValidDbAsync();
+            if (string.Equals(_activeProject, selected, StringComparison.OrdinalIgnoreCase))
+            {
+                SetBusyState(true, "Project is active, switching to none first...");
+                await _appService.EmitIntentAsync(StateIntent.None(), CancellationToken.None);
+            }
+
+            _projects.RemoveAll(p => string.Equals(p, selected, StringComparison.OrdinalIgnoreCase));
+            SaveProjects();
+            RebuildProjectsUi();
+            SetBusyState(false, $"Project '{selected}' deleted.");
+        }
+        catch (Exception ex)
+        {
+            SetBusyState(false, $"Delete failed: {ex.Message}");
+        }
     }
 
-    private async Task EnsureValidDbAsync()
+    private async void ProjectButtonOnClick(object? sender, EventArgs e)
     {
-        if (_userCredential is null || string.IsNullOrWhiteSpace(_projectId))
+        try
         {
-            throw new InvalidOperationException("Google authentication has not been initialized.");
+            if (sender is not Button button || button.Tag is not string projectName)
+            {
+                return;
+            }
+
+            SetBusyState(true, $"Switching project to {projectName}...");
+            await _appService.EmitIntentAsync(StateIntent.ForProject(projectName), CancellationToken.None);
+            SetBusyState(false, $"Active project: {projectName}");
         }
-
-        await _userCredential.RefreshTokenAsync(CancellationToken.None);
-
-        string? accessToken = _userCredential.Token.AccessToken;
-        if (string.IsNullOrWhiteSpace(accessToken))
+        catch (Exception ex)
         {
-            throw new InvalidOperationException("No access token returned by Google OAuth.");
-        }
-
-        GoogleCredential credential = GoogleCredential.FromAccessToken(accessToken);
-        _db = new FirestoreDbBuilder
-        {
-            ProjectId = _projectId,
-            Credential = credential
-        }.Build();
-    }
-
-    private async Task LoadDocumentsAsync()
-    {
-        if (_db is null)
-        {
-            throw new InvalidOperationException("Connect first.");
-        }
-
-        await EnsureValidDbAsync();
-
-        string collectionName = GetCollectionName();
-        QuerySnapshot snapshot = await _db!.Collection(collectionName).Limit(20).GetSnapshotAsync();
-
-        lstDocs.Items.Clear();
-        foreach (DocumentSnapshot doc in snapshot.Documents)
-        {
-            lstDocs.Items.Add(doc.Id);
-        }
-
-        if (snapshot.Count == 0)
-        {
-            lstDocs.Items.Add("(no documents yet)");
+            SetBusyState(false, $"Switch failed: {ex.Message}");
         }
     }
-
-    private string GetCollectionName()
-    {
-        string value = txtCollection.Text.Trim();
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            throw new InvalidOperationException("Collection name cannot be empty.");
-        }
-
-        return value;
-    }
-
-    private static async Task<InstalledClientConfig> ReadInstalledClientConfigAsync(string path)
-    {
-        await using FileStream fs = File.OpenRead(path);
-        OAuthDesktopSecretFile? json = await JsonSerializer.DeserializeAsync<OAuthDesktopSecretFile>(fs);
-
-        if (json?.Installed is null ||
-            string.IsNullOrWhiteSpace(json.Installed.ClientId) ||
-            string.IsNullOrWhiteSpace(json.Installed.ClientSecret))
-        {
-            throw new InvalidOperationException("Invalid desktop OAuth JSON. Expected an 'installed' section with client_id and client_secret.");
-        }
-
-        return json.Installed;
-    }
-
-    private static string GetTokenStorePath() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ProjectTimeTracker.Auth");
 
     private void TryPrefillSecretPath()
     {
@@ -215,29 +160,146 @@ public partial class Form1 : Form
         }
     }
 
+    private void ConfigureTrackerUi()
+    {
+        btnAddProject.Text = "Add";
+        btnDeleteProject.Text = "Delete";
+        btnNone.Text = "None";
+        lblStatus.Text = "Connect, then pick a project.";
+        Text = "ProjectTimeTracker";
+    }
+
+    private void AppServiceOnStateChanged(TrackerState state, StateEvent stateEvent, bool isLocal)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => AppServiceOnStateChanged(state, stateEvent, isLocal));
+            return;
+        }
+
+        string source = isLocal ? "local" : "remote";
+        string project = state.IsNone ? "none" : state.CurrentProject!;
+        _activeProject = state.IsNone ? null : state.CurrentProject;
+        UpdateActiveButtonStyles();
+        lblStatus.Text = $"Current: {project} (since {state.SinceUtc:HH:mm:ss})";
+        lstDocs.Items.Insert(0,
+            $"{stateEvent.OccurredAtUtc:HH:mm:ss} [{source}] {stateEvent.EventType} {(stateEvent.ProjectName ?? "none")}");
+
+        while (lstDocs.Items.Count > 200)
+        {
+            lstDocs.Items.RemoveAt(lstDocs.Items.Count - 1);
+        }
+    }
+
     private void SetBusyState(bool busy, string message)
     {
         btnConnect.Enabled = !busy;
-        btnLoadDocs.Enabled = !busy;
-        btnAddSample.Enabled = !busy;
+        btnNone.Enabled = !busy;
+        btnAddProject.Enabled = !busy;
+        btnDeleteProject.Enabled = !busy;
+        txtProjectName.Enabled = !busy;
+        lstProjects.Enabled = !busy;
+        flpProjectButtons.Enabled = !busy;
         lblStatus.Text = message;
     }
 
-    private sealed class OAuthDesktopSecretFile
+    private void RebuildProjectsUi()
     {
-        [JsonPropertyName("installed")]
-        public InstalledClientConfig? Installed { get; set; }
+        lstProjects.BeginUpdate();
+        try
+        {
+            lstProjects.Items.Clear();
+            foreach (string project in _projects)
+            {
+                lstProjects.Items.Add(project);
+            }
+        }
+        finally
+        {
+            lstProjects.EndUpdate();
+        }
+
+        flpProjectButtons.SuspendLayout();
+        try
+        {
+            flpProjectButtons.Controls.Clear();
+            _projectButtons.Clear();
+
+            foreach (string project in _projects)
+            {
+                Button projectButton = new()
+                {
+                    AutoSize = true,
+                    Margin = new Padding(4),
+                    Tag = project,
+                    Text = project
+                };
+                projectButton.Click += ProjectButtonOnClick;
+                _projectButtons[project] = projectButton;
+                flpProjectButtons.Controls.Add(projectButton);
+            }
+        }
+        finally
+        {
+            flpProjectButtons.ResumeLayout();
+        }
+
+        UpdateActiveButtonStyles();
     }
 
-    private sealed class InstalledClientConfig
+    private void UpdateActiveButtonStyles()
     {
-        [JsonPropertyName("client_id")]
-        public string ClientId { get; set; } = string.Empty;
+        foreach ((string name, Button button) in _projectButtons)
+        {
+            bool isActive = !string.IsNullOrWhiteSpace(_activeProject) &&
+                            string.Equals(name, _activeProject, StringComparison.OrdinalIgnoreCase);
+            button.BackColor = isActive ? Color.LightGreen : SystemColors.Control;
+            button.Font = new Font(button.Font, isActive ? FontStyle.Bold : FontStyle.Regular);
+        }
 
-        [JsonPropertyName("client_secret")]
-        public string ClientSecret { get; set; } = string.Empty;
+        bool noneActive = string.IsNullOrWhiteSpace(_activeProject);
+        btnNone.BackColor = noneActive ? Color.LightGreen : SystemColors.Control;
+        btnNone.Font = new Font(btnNone.Font, noneActive ? FontStyle.Bold : FontStyle.Regular);
+    }
 
-        [JsonPropertyName("project_id")]
-        public string ProjectId { get; set; } = string.Empty;
+    private void LoadProjects()
+    {
+        if (!File.Exists(ProjectsFilePath))
+        {
+            return;
+        }
+
+        try
+        {
+            string json = File.ReadAllText(ProjectsFilePath);
+            string[]? loaded = JsonSerializer.Deserialize<string[]>(json);
+            if (loaded is null)
+            {
+                return;
+            }
+
+            _projects.Clear();
+            _projects.AddRange(loaded.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p.Trim()));
+            _projects.Sort(StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            // Keep UI usable even if local project file is malformed.
+        }
+    }
+
+    private void SaveProjects()
+    {
+        string directory = Path.GetDirectoryName(ProjectsFilePath)!;
+        Directory.CreateDirectory(directory);
+        string json = JsonSerializer.Serialize(_projects);
+        File.WriteAllText(ProjectsFilePath, json);
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        _appService.StateChanged -= AppServiceOnStateChanged;
+        _appService.Dispose();
+        base.OnFormClosed(e);
     }
 }
