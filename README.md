@@ -23,6 +23,31 @@ The app is append-only:
 dotnet run --project .\ProjectTimeTracker.csproj
 ```
 
+## Build Portable EXE (USB)
+
+Generate a single-file framework-dependent `.exe` you can copy to a USB key.
+
+Target PCs must have the .NET 9 Windows Desktop Runtime installed.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-portable.ps1 -Version 1.0.0 -Rid win-x64
+```
+
+Output file:
+- `artifacts\usb-ready\ProjectTimeTracker_v1.0.0_win-x64_framework-dependent.zip`
+
+The zip contains:
+- `ProjectTimeTracker_v1.0.0_win-x64_framework-dependent.exe`
+- `ProjectTimeTracker_v1.0.0_win-x64_framework-dependent.exe.sha256`
+
+Verify checksum:
+
+```powershell
+Expand-Archive .\artifacts\usb-ready\ProjectTimeTracker_v1.0.0_win-x64_framework-dependent.zip -DestinationPath .\artifacts\usb-ready\extracted -Force
+Get-FileHash .\artifacts\usb-ready\extracted\ProjectTimeTracker_v1.0.0_win-x64_framework-dependent.exe -Algorithm SHA256
+Get-Content .\artifacts\usb-ready\extracted\ProjectTimeTracker_v1.0.0_win-x64_framework-dependent.exe.sha256
+```
+
 ## Notes
 
 - On first connect, a browser sign-in/consent screen appears.
