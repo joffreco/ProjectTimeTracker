@@ -189,8 +189,8 @@ partial class Form1
         this.Controls.Add(this.btnBrowse);
         this.Controls.Add(this.txtSecretPath);
         this.Controls.Add(this.lblSecret);
-        this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle;
-        this.MaximizeBox = false;
+        this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.Sizable;
+        this.MaximizeBox = true;
         this.Name = "Form1";
         this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
         this.Text = "ProjectTimeTracker";
