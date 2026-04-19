@@ -22,3 +22,6 @@
 /obj/Debug/net9.0-windows/ProjectTimeTracker.pdb
 /bin/Debug/net9.0-windows/ProjectTimeTracker.runtimeconfig.json
 /obj/Debug/net9.0-windows/ProjectTimeTracker.sourcelink.json
+
+# Embedded OAuth client secret (do not commit)
+/Secrets/client_secret.json

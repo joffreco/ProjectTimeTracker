@@ -38,12 +38,12 @@ public sealed class TrackerAppService : IDisposable
 
     public event Action<TrackerState, StateEvent, bool>? StateChanged;
 
-    public async Task ConnectAsync(string secretPath, string userId, CancellationToken cancellationToken)
+    public async Task ConnectAsync(string userId, CancellationToken cancellationToken)
     {
         _userId = userId;
         _deviceId = _deviceIdentityProvider.GetOrCreateDeviceId();
 
-        await _session.ConnectAsync(secretPath, cancellationToken);
+        await _session.ConnectAsync(cancellationToken);
         _gateway.ConfigureUser(userId);
 
         IReadOnlyList<StateEvent> existingEvents = await _gateway.ReadAllAsync(cancellationToken);

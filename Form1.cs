@@ -17,8 +17,8 @@ public partial class Form1 : Form
 
     private NotifyIcon? _trayIcon;
     private ContextMenuStrip? _trayMenu;
-    private ToolStripMenuItem? _trayCurrentItem;
-    private ToolStripMenuItem? _trayProjectsRoot;
+    private ToolStripSeparator? _trayProjectsSeparator;
+    private readonly List<ToolStripItem> _trayProjectItems = [];
     private ToolStripMenuItem? _trayAutostartItem;
     private bool _exitRequested;
 
@@ -33,7 +33,6 @@ public partial class Form1 : Form
         _projectsRepository = projectsRepository;
         InitializeComponent();
         ConfigureTrackerUi();
-        TryPrefillSecretPath();
         LoadProjects();
         RebuildProjectsUi();
         InitializeTrayIcon();
@@ -47,28 +46,20 @@ public partial class Form1 : Form
             Load += (_, _) => Hide();
         }
         _appService.StateChanged += AppServiceOnStateChanged;
+
+        // Auto-connect on startup using the embedded OAuth client secret.
+        Load += (_, _) => BeginInvoke(new Action(() => _ = ConnectAsync()));
     }
 
-    private void btnBrowse_Click(object sender, EventArgs e)
-    {
-        using var dialog = new OpenFileDialog
-        {
-            Filter = "Google Desktop Client Secret (*.json)|*.json|All files (*.*)|*.*",
-            Title = "Select apps.googleusercontent.com JSON"
-        };
+    private System.Windows.Forms.Timer? _reconnectTimer;
+    private bool _isConnected;
 
-        if (dialog.ShowDialog(this) == DialogResult.OK)
-        {
-            txtSecretPath.Text = dialog.FileName;
-        }
-    }
-
-    private async void btnConnect_Click(object sender, EventArgs e)
+    private async Task ConnectAsync()
     {
         try
         {
             SetBusyState(true, "Opening Google sign-in...");
-            await _appService.ConnectAsync(txtSecretPath.Text.Trim(), "joff", CancellationToken.None);
+            await _appService.ConnectAsync("joff", CancellationToken.None);
 
             _projectsRepository.ConfigureUser("joff");
             IReadOnlyList<string> remoteProjects = await _projectsRepository.ReadAsync(CancellationToken.None);
@@ -95,11 +86,34 @@ public partial class Form1 : Form
             }, CancellationToken.None);
 
             SetBusyState(false, "Connected. Listening for events and projects...");
+            _isConnected = true;
         }
         catch (Exception ex)
         {
-            SetBusyState(false, $"Connection failed: {ex.Message}");
+            SetBusyState(false, $"Connection failed: {ex.Message}. Retrying in 10s...");
+            ScheduleReconnect();
         }
+    }
+
+    private void ScheduleReconnect()
+    {
+        if (_isConnected)
+        {
+            return;
+        }
+
+        if (_reconnectTimer is null)
+        {
+            _reconnectTimer = new System.Windows.Forms.Timer { Interval = 10_000 };
+            _reconnectTimer.Tick += (_, _) =>
+            {
+                _reconnectTimer!.Stop();
+                _ = ConnectAsync();
+            };
+        }
+
+        _reconnectTimer.Stop();
+        _reconnectTimer.Start();
     }
 
     private async void btnNone_Click(object sender, EventArgs e)
@@ -192,29 +206,12 @@ public partial class Form1 : Form
         }
     }
 
-    private void TryPrefillSecretPath()
-    {
-        string downloads = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        string downloadPath = Path.Combine(downloads, "Downloads");
-
-        if (!Directory.Exists(downloadPath))
-        {
-            return;
-        }
-
-        string[] matches = Directory.GetFiles(downloadPath, "client_secret_*.apps.googleusercontent.com.json");
-        if (matches.Length > 0)
-        {
-            txtSecretPath.Text = matches[0];
-        }
-    }
-
     private void ConfigureTrackerUi()
     {
         btnAddProject.Text = "Add";
         btnDeleteProject.Text = "Delete";
         btnNone.Text = "None";
-        lblStatus.Text = "Connect, then pick a project.";
+        lblStatus.Text = "Connecting...";
         Text = "ProjectTimeTracker";
     }
 
@@ -230,10 +227,6 @@ public partial class Form1 : Form
         string project = state.IsNone ? "none" : state.CurrentProject!;
         _activeProject = state.IsNone ? null : state.CurrentProject;
         UpdateActiveButtonStyles();
-        if (_trayCurrentItem is not null)
-        {
-            _trayCurrentItem.Text = state.IsNone ? "Current: none" : $"Current: {state.CurrentProject}";
-        }
         if (_trayIcon is not null)
         {
             _trayIcon.Text = state.IsNone ? "ProjectTimeTracker - none" : $"ProjectTimeTracker - {state.CurrentProject}";
@@ -253,7 +246,6 @@ public partial class Form1 : Form
 
     private void SetBusyState(bool busy, string message)
     {
-        btnConnect.Enabled = !busy;
         btnNone.Enabled = !busy;
         btnAddProject.Enabled = !busy;
         btnDeleteProject.Enabled = !busy;
@@ -321,6 +313,25 @@ public partial class Form1 : Form
         bool noneActive = string.IsNullOrWhiteSpace(_activeProject);
         btnNone.BackColor = noneActive ? Color.LightGreen : SystemColors.Control;
         btnNone.Font = new Font(btnNone.Font, noneActive ? FontStyle.Bold : FontStyle.Regular);
+
+        UpdateTrayActiveStyles();
+    }
+
+    private void UpdateTrayActiveStyles()
+    {
+        foreach (ToolStripItem item in _trayProjectItems)
+        {
+            if (item is not ToolStripMenuItem menuItem || menuItem.Tag is not string projectName)
+            {
+                continue;
+            }
+
+            bool isActive = !string.IsNullOrWhiteSpace(_activeProject) &&
+                            string.Equals(projectName, _activeProject, StringComparison.OrdinalIgnoreCase);
+            menuItem.Checked = isActive;
+            menuItem.BackColor = isActive ? Color.LightGreen : SystemColors.Control;
+            menuItem.Font = new Font(menuItem.Font, isActive ? FontStyle.Bold : FontStyle.Regular);
+        }
     }
 
     private void LoadProjects()
@@ -394,6 +405,7 @@ public partial class Form1 : Form
         _appService.StateChanged -= AppServiceOnStateChanged;
         _appService.Dispose();
         _projectsRepository.Dispose();
+        _reconnectTimer?.Dispose();
         _trayIcon?.Dispose();
         _trayMenu?.Dispose();
         base.OnFormClosed(e);
@@ -420,13 +432,19 @@ public partial class Form1 : Form
     private void InitializeTrayIcon()
     {
         _trayMenu = new ContextMenuStrip();
+        _trayMenu.Closing += (_, e) =>
+        {
+            // Keep the menu open after clicking an item; only close on
+            // explicit dismiss (click outside, Esc) or app shutdown.
+            if (e.CloseReason == ToolStripDropDownCloseReason.ItemClicked)
+            {
+                e.Cancel = true;
+            }
+        };
 
-        _trayCurrentItem = new ToolStripMenuItem("Current: none") { Enabled = false };
-        _trayMenu.Items.Add(_trayCurrentItem);
-        _trayMenu.Items.Add(new ToolStripSeparator());
 
-        _trayProjectsRoot = new ToolStripMenuItem("Switch project");
-        _trayMenu.Items.Add(_trayProjectsRoot);
+        _trayProjectsSeparator = new ToolStripSeparator();
+        _trayMenu.Items.Add(_trayProjectsSeparator);
 
         ToolStripMenuItem trayNoneItem = new("Set none");
         trayNoneItem.Click += async (_, _) => await SafeEmitIntentAsync(StateIntent.None());
@@ -435,7 +453,11 @@ public partial class Form1 : Form
         _trayMenu.Items.Add(new ToolStripSeparator());
 
         ToolStripMenuItem showItem = new("Show window");
-        showItem.Click += (_, _) => ShowFromTray();
+        showItem.Click += (_, _) =>
+        {
+            _trayMenu?.Close(ToolStripDropDownCloseReason.CloseCalled);
+            ShowFromTray();
+        };
         _trayMenu.Items.Add(showItem);
 
         _trayAutostartItem = new ToolStripMenuItem("Start with Windows")
@@ -451,6 +473,7 @@ public partial class Form1 : Form
         ToolStripMenuItem exitItem = new("Exit");
         exitItem.Click += (_, _) =>
         {
+            _trayMenu?.Close(ToolStripDropDownCloseReason.CloseCalled);
             _exitRequested = true;
             Close();
         };
@@ -463,7 +486,13 @@ public partial class Form1 : Form
             Visible = true,
             ContextMenuStrip = _trayMenu
         };
-        _trayIcon.DoubleClick += (_, _) => ShowFromTray();
+        _trayIcon.MouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                ShowFromTray();
+            }
+        };
 
         RebuildTrayProjectsMenu();
     }
@@ -508,25 +537,37 @@ public partial class Form1 : Form
 
     private void RebuildTrayProjectsMenu()
     {
-        if (_trayProjectsRoot is null)
+        if (_trayMenu is null || _trayProjectsSeparator is null)
         {
             return;
         }
 
-        _trayProjectsRoot.DropDownItems.Clear();
-
-        if (_projects.Count == 0)
+        foreach (ToolStripItem item in _trayProjectItems)
         {
-            _trayProjectsRoot.DropDownItems.Add(new ToolStripMenuItem("(no projects)") { Enabled = false });
+            _trayMenu.Items.Remove(item);
+            item.Dispose();
+        }
+        _trayProjectItems.Clear();
+
+        _trayProjectsSeparator.Visible = _projects.Count > 0;
+
+        int insertIndex = _trayMenu.Items.IndexOf(_trayProjectsSeparator);
+        if (insertIndex < 0)
+        {
             return;
         }
 
         foreach (string project in _projects)
         {
-            ToolStripMenuItem item = new(project) { Tag = project };
-            item.Click += async (_, _) => await SafeEmitIntentAsync(StateIntent.ForProject(project));
-            _trayProjectsRoot.DropDownItems.Add(item);
+            string captured = project;
+            ToolStripMenuItem item = new(captured) { Tag = captured };
+            item.Click += async (_, _) => await SafeEmitIntentAsync(StateIntent.ForProject(captured));
+            _trayMenu.Items.Insert(insertIndex, item);
+            _trayProjectItems.Add(item);
+            insertIndex++;
         }
+
+        UpdateTrayActiveStyles();
     }
 
     private async Task SafeEmitIntentAsync(StateIntent intent)

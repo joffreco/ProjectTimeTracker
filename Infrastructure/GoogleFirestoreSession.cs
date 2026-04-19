@@ -1,6 +1,7 @@
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Util.Store;
 using Google.Cloud.Firestore;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -12,13 +13,15 @@ public interface IGoogleFirestoreSession
 
     string? ProjectId { get; }
 
-    Task ConnectAsync(string secretPath, CancellationToken cancellationToken);
+    Task ConnectAsync(CancellationToken cancellationToken);
 
     Task<FirestoreDb> CreateDbAsync(CancellationToken cancellationToken);
 }
 
 public sealed class GoogleFirestoreSession : IGoogleFirestoreSession
 {
+    private const string EmbeddedSecretResourceName = "ProjectTimeTracker.client_secret.json";
+
     private static readonly string[] FirestoreScopes = ["https://www.googleapis.com/auth/datastore"];
 
     private UserCredential? _userCredential;
@@ -27,17 +30,12 @@ public sealed class GoogleFirestoreSession : IGoogleFirestoreSession
 
     public string? ProjectId { get; private set; }
 
-    public async Task ConnectAsync(string secretPath, CancellationToken cancellationToken)
+    public async Task ConnectAsync(CancellationToken cancellationToken)
     {
-        if (!File.Exists(secretPath))
-        {
-            throw new FileNotFoundException("Select your apps.googleusercontent.com JSON file first.", secretPath);
-        }
-
-        InstalledClientConfig installed = await ReadInstalledClientConfigAsync(secretPath, cancellationToken);
+        InstalledClientConfig installed = await ReadEmbeddedInstalledClientConfigAsync(cancellationToken);
         if (string.IsNullOrWhiteSpace(installed.ProjectId))
         {
-            throw new InvalidOperationException("project_id is missing in the JSON file.");
+            throw new InvalidOperationException("project_id is missing in the embedded client_secret.json.");
         }
 
         _userCredential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
@@ -76,10 +74,19 @@ public sealed class GoogleFirestoreSession : IGoogleFirestoreSession
         }.Build();
     }
 
-    private static async Task<InstalledClientConfig> ReadInstalledClientConfigAsync(string path, CancellationToken cancellationToken)
+    private static async Task<InstalledClientConfig> ReadEmbeddedInstalledClientConfigAsync(CancellationToken cancellationToken)
     {
-        await using FileStream fs = File.OpenRead(path);
-        OAuthDesktopSecretFile? json = await JsonSerializer.DeserializeAsync<OAuthDesktopSecretFile>(fs, cancellationToken: cancellationToken);
+        Assembly assembly = typeof(GoogleFirestoreSession).Assembly;
+        await using Stream? stream = assembly.GetManifestResourceStream(EmbeddedSecretResourceName);
+        if (stream is null)
+        {
+            throw new InvalidOperationException(
+                $"Embedded OAuth client secret '{EmbeddedSecretResourceName}' was not found. " +
+                "Place your Google desktop client secret at 'Secrets/client_secret.json' and rebuild.");
+        }
+
+        OAuthDesktopSecretFile? json = await JsonSerializer.DeserializeAsync<OAuthDesktopSecretFile>(
+            stream, cancellationToken: cancellationToken);
 
         if (json?.Installed is null ||
             string.IsNullOrWhiteSpace(json.Installed.ClientId) ||
@@ -112,4 +119,3 @@ public sealed class GoogleFirestoreSession : IGoogleFirestoreSession
         public string ProjectId { get; set; } = string.Empty;
     }
 }
-
