@@ -47,16 +47,6 @@ $hash = (Get-FileHash -Path $portableExePath -Algorithm SHA256).Hash.ToLowerInva
 $hashPath = $portableExePath + ".sha256"
 Set-Content -Path $hashPath -Value ("$hash *$portableExeName") -NoNewline
 
-$zipName = "ProjectTimeTracker_v${Version}_${Rid}_framework-dependent.zip"
-$zipPath = Join-Path $OutDir $zipName
-if (Test-Path $zipPath) {
-    Remove-Item $zipPath -Force
-}
-Compress-Archive -Path $portableExePath, $hashPath -DestinationPath $zipPath -CompressionLevel Optimal
-
-Remove-Item $portableExePath -Force
-Remove-Item $hashPath -Force
-
 Write-Host "Done"
-Write-Host "ZIP:  $zipPath"
-
+Write-Host "EXE:  $portableExePath"
+Write-Host "SHA:  $hashPath"

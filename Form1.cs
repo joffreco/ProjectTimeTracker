@@ -13,6 +13,8 @@ public partial class Form1 : Form
     private readonly Dictionary<string, Button> _projectButtons = new(StringComparer.OrdinalIgnoreCase);
     private string? _activeProject;
 
+    private static readonly TimeZoneInfo MontrealTimeZone = ResolveMontrealTimeZone();
+
     private NotifyIcon? _trayIcon;
     private ContextMenuStrip? _trayMenu;
     private ToolStripMenuItem? _trayCurrentItem;
@@ -236,9 +238,12 @@ public partial class Form1 : Form
         {
             _trayIcon.Text = state.IsNone ? "ProjectTimeTracker - none" : $"ProjectTimeTracker - {state.CurrentProject}";
         }
-        lblStatus.Text = $"Current: {project} (since {state.SinceUtc:HH:mm:ss})";
+        string sinceText = state.SinceUtc.HasValue
+            ? ToMontreal(state.SinceUtc.Value).ToString("HH:mm:ss")
+            : "-";
+        lblStatus.Text = $"Current: {project} (since {sinceText})";
         lstDocs.Items.Insert(0,
-            $"{stateEvent.OccurredAtUtc:HH:mm:ss} [{source}] {stateEvent.EventType} {(stateEvent.ProjectName ?? "none")}");
+            $"{ToMontreal(stateEvent.OccurredAtUtc):HH:mm:ss} [{source}] {stateEvent.EventType} {(stateEvent.ProjectName ?? "none")}");
 
         while (lstDocs.Items.Count > 200)
         {
@@ -550,5 +555,20 @@ public partial class Form1 : Form
         WindowState = FormWindowState.Normal;
         Activate();
         BringToFront();
+    }
+
+    private static TimeZoneInfo ResolveMontrealTimeZone()
+    {
+        try { return TimeZoneInfo.FindSystemTimeZoneById("America/Toronto"); }
+        catch { }
+        try { return TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time"); }
+        catch { }
+        return TimeZoneInfo.Local;
+    }
+
+    private static DateTime ToMontreal(DateTime utc)
+    {
+        DateTime asUtc = DateTime.SpecifyKind(utc, DateTimeKind.Utc);
+        return TimeZoneInfo.ConvertTimeFromUtc(asUtc, MontrealTimeZone);
     }
 }
