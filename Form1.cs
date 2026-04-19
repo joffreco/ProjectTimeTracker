@@ -466,7 +466,7 @@ public partial class Form1 : Form
             EventType = e.EventType,
             Project = e.ProjectName ?? "none"
         });
-        _statusesView.SetEntries(entries);
+        _statusesView.SetEntries(entries, ToMontreal(DateTime.UtcNow));
     }
 
     private void SetBusyState(bool busy, string message)
