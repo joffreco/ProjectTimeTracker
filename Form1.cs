@@ -236,7 +236,7 @@ public partial class Form1 : Form
             : "-";
         lblStatus.Text = $"Current: {project} (since {sinceText})";
         lstDocs.Items.Insert(0,
-            $"{ToMontreal(stateEvent.OccurredAtUtc):HH:mm:ss} [{source}] {stateEvent.EventType} {(stateEvent.ProjectName ?? "none")}");
+            $"{ToMontreal(stateEvent.OccurredAtUtc):yyyy-MM-dd HH:mm:ss} [{source}] {stateEvent.EventType} {(stateEvent.ProjectName ?? "none")}");
 
         while (lstDocs.Items.Count > 200)
         {
