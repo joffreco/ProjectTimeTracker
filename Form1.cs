@@ -1,12 +1,16 @@
 using ProjectTimeTracker.Application;
 using ProjectTimeTracker.Domain;
 using ProjectTimeTracker.Infrastructure;
+using ProjectTimeTracker.UI;
 using System.Text.Json;
 
 namespace ProjectTimeTracker;
 
 public partial class Form1 : Form
 {
+    private const string NavProjects = "Projects";
+    private const string NavStatuses = "Statuses";
+
     private readonly TrackerAppService _appService;
     private readonly ProjectsRepository _projectsRepository;
     private readonly List<string> _projects = [];
@@ -22,6 +26,12 @@ public partial class Form1 : Form
     private ToolStripMenuItem? _trayAutostartItem;
     private bool _exitRequested;
 
+    private readonly ProjectsView _projectsView = new() { Dock = DockStyle.Fill };
+    private readonly StatusesView _statusesView = new() { Dock = DockStyle.Fill };
+
+    private System.Windows.Forms.Timer? _reconnectTimer;
+    private bool _isConnected;
+
     private string ProjectsFilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ProjectTimeTracker",
@@ -33,6 +43,7 @@ public partial class Form1 : Form
         _projectsRepository = projectsRepository;
         InitializeComponent();
         ConfigureTrackerUi();
+        InitializeNavigation();
         LoadProjects();
         RebuildProjectsUi();
         InitializeTrayIcon();
@@ -40,19 +51,276 @@ public partial class Form1 : Form
 
         if (HasTrayStartupArg())
         {
-            // Started silently at boot: stay in tray, don't show window.
             ShowInTaskbar = false;
             WindowState = FormWindowState.Minimized;
             Load += (_, _) => Hide();
         }
         _appService.StateChanged += AppServiceOnStateChanged;
+        _appService.EventsChanged += AppServiceOnEventsChanged;
 
-        // Auto-connect on startup using the embedded OAuth client secret.
         Load += (_, _) => BeginInvoke(new Action(() => _ = ConnectAsync()));
     }
 
-    private System.Windows.Forms.Timer? _reconnectTimer;
-    private bool _isConnected;
+    private void InitializeNavigation()
+    {
+        pnlContent.Controls.Add(_projectsView);
+        pnlContent.Controls.Add(_statusesView);
+        _projectsView.Visible = true;
+        _statusesView.Visible = false;
+
+        _projectsView.AddRequested += (_, _) => HandleAddProject();
+        _projectsView.EditRequested += (_, name) => HandleEditProject(name);
+        _projectsView.DeleteRequested += (_, name) => _ = HandleDeleteProjectAsync(name);
+
+        _statusesView.AddRequested += (_, _) => _ = HandleAddStatusAsync();
+        _statusesView.EditRequested += (_, eventId) => _ = HandleEditStatusAsync(eventId);
+        _statusesView.DeleteRequested += (_, eventId) => _ = HandleDeleteStatusAsync(eventId);
+
+        lstNav.Items.Add(NavProjects);
+        lstNav.Items.Add(NavStatuses);
+        lstNav.SelectedIndexChanged += (_, _) => SwitchView(lstNav.SelectedItem as string);
+        lstNav.SelectedIndex = 0;
+    }
+
+    private void SwitchView(string? selection)
+    {
+        bool projects = string.Equals(selection, NavProjects, StringComparison.Ordinal);
+        _projectsView.Visible = projects;
+        _statusesView.Visible = !projects;
+    }
+
+    private void HandleAddProject()
+    {
+        try
+        {
+            string? name = InputDialog.Prompt(this, "Add project", "Project name:");
+            if (name is null)
+            {
+                return;
+            }
+
+            if (_projects.Any(p => string.Equals(p, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException("Project already exists.");
+            }
+
+            _projects.Add(name);
+            _projects.Sort(StringComparer.OrdinalIgnoreCase);
+            SaveProjects();
+            RebuildProjectsUi();
+            _ = TryPushProjectsAsync();
+            SetBusyState(false, $"Project '{name}' added.");
+        }
+        catch (Exception ex)
+        {
+            SetBusyState(false, $"Add failed: {ex.Message}");
+        }
+    }
+
+    private void HandleEditProject(string oldName)
+    {
+        try
+        {
+            string? newName = InputDialog.Prompt(this, "Rename project", "New name:", oldName);
+            if (newName is null || string.Equals(newName, oldName, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (_projects.Any(p => string.Equals(p, newName, StringComparison.OrdinalIgnoreCase)
+                                    && !string.Equals(p, oldName, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException("Another project with this name already exists.");
+            }
+
+            int index = _projects.FindIndex(p => string.Equals(p, oldName, StringComparison.OrdinalIgnoreCase));
+            if (index < 0)
+            {
+                throw new InvalidOperationException("Project not found.");
+            }
+
+            _projects[index] = newName;
+            _projects.Sort(StringComparer.OrdinalIgnoreCase);
+
+            if (string.Equals(_activeProject, oldName, StringComparison.OrdinalIgnoreCase))
+            {
+                _activeProject = newName;
+            }
+
+            SaveProjects();
+            RebuildProjectsUi();
+            _ = TryPushProjectsAsync();
+            SetBusyState(false, $"Renamed '{oldName}' → '{newName}'.");
+        }
+        catch (Exception ex)
+        {
+            SetBusyState(false, $"Rename failed: {ex.Message}");
+        }
+    }
+
+    private async Task HandleDeleteProjectAsync(string name)
+    {
+        try
+        {
+            DialogResult confirm = MessageBox.Show(this,
+                $"Delete project '{name}'? Past events will keep referencing this name.",
+                "Delete project",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (confirm != DialogResult.Yes)
+            {
+                return;
+            }
+
+            if (string.Equals(_activeProject, name, StringComparison.OrdinalIgnoreCase))
+            {
+                SetBusyState(true, "Project is active, switching to none first...");
+                await _appService.EmitIntentAsync(StateIntent.None(), CancellationToken.None);
+            }
+
+            _projects.RemoveAll(p => string.Equals(p, name, StringComparison.OrdinalIgnoreCase));
+            SaveProjects();
+            RebuildProjectsUi();
+            _ = TryPushProjectsAsync();
+            SetBusyState(false, $"Project '{name}' deleted.");
+        }
+        catch (Exception ex)
+        {
+            SetBusyState(false, $"Delete failed: {ex.Message}");
+        }
+    }
+
+    private async Task HandleAddStatusAsync()
+    {
+        try
+        {
+            DateTime initialLocal = ToMontreal(DateTime.UtcNow);
+            using StatusEditDialog dialog = new(_projects, initialLocal, _activeProject);
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            DateTime localTime = DateTime.SpecifyKind(dialog.SelectedLocalTime, DateTimeKind.Unspecified);
+            DateTime utc = TimeZoneInfo.ConvertTimeToUtc(localTime, MontrealTimeZone);
+            string? newProject = dialog.SelectedProject;
+
+            SetBusyState(true, "Adding status...");
+            StateEvent created = await _appService.AddEventAsync(newProject, utc, CancellationToken.None);
+            await PruneRedundantNeighborsAsync(created.EventId, CancellationToken.None);
+            SetBusyState(false, "Status added.");
+        }
+        catch (Exception ex)
+        {
+            SetBusyState(false, $"Add failed: {ex.Message}");
+        }
+    }
+
+    private async Task HandleEditStatusAsync(Guid eventId)
+    {
+        try
+        {
+            if (!_appService.AllEvents.TryGetValue(eventId, out StateEvent? existing))
+            {
+                return;
+            }
+
+            DateTime initialLocal = ToMontreal(existing.OccurredAtUtc);
+            using StatusEditDialog dialog = new(_projects, initialLocal, existing.ProjectName);
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            DateTime localTime = DateTime.SpecifyKind(dialog.SelectedLocalTime, DateTimeKind.Unspecified);
+            DateTime utc = TimeZoneInfo.ConvertTimeToUtc(localTime, MontrealTimeZone);
+            string? newProject = dialog.SelectedProject;
+
+            SetBusyState(true, "Updating status...");
+            await _appService.EditEventAsync(eventId, newProject, utc, CancellationToken.None);
+            await PruneRedundantNeighborsAsync(eventId, CancellationToken.None);
+            SetBusyState(false, "Status updated.");
+        }
+        catch (Exception ex)
+        {
+            SetBusyState(false, $"Edit failed: {ex.Message}");
+        }
+    }
+
+    private async Task PruneRedundantNeighborsAsync(Guid editedEventId, CancellationToken cancellationToken)
+    {
+        IReadOnlyDictionary<Guid, StateEvent> all = _appService.AllEvents;
+        if (!all.TryGetValue(editedEventId, out StateEvent? edited))
+        {
+            return;
+        }
+
+        List<StateEvent> sorted = all.Values
+            .OrderBy(e => e.OccurredAtUtc)
+            .ThenBy(e => e.EventId)
+            .ToList();
+
+        int idx = sorted.FindIndex(e => e.EventId == editedEventId);
+        if (idx < 0)
+        {
+            return;
+        }
+
+        StateEvent? prev = idx > 0 ? sorted[idx - 1] : null;
+        StateEvent? next = idx < sorted.Count - 1 ? sorted[idx + 1] : null;
+
+        // Edited entry is redundant: previous already established the same project.
+        if (prev is not null && SameProject(prev, edited))
+        {
+            await _appService.DeleteEventAsync(editedEventId, cancellationToken);
+            return;
+        }
+
+        // Next entry is redundant: edited now establishes the same project the next one was switching to.
+        if (next is not null && SameProject(edited, next))
+        {
+            await _appService.DeleteEventAsync(next.EventId, cancellationToken);
+        }
+    }
+
+    private static bool SameProject(StateEvent a, StateEvent b)
+    {
+        bool aNone = a.EventType == StateEventType.NoneSelected;
+        bool bNone = b.EventType == StateEventType.NoneSelected;
+        if (aNone && bNone)
+        {
+            return true;
+        }
+        if (aNone != bNone)
+        {
+            return false;
+        }
+        return string.Equals(a.ProjectName, b.ProjectName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task HandleDeleteStatusAsync(Guid eventId)
+    {
+        try
+        {
+            DialogResult confirm = MessageBox.Show(this,
+                "Delete this status entry? The historical state will be recomputed without it.",
+                "Delete status",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+            if (confirm != DialogResult.Yes)
+            {
+                return;
+            }
+
+            SetBusyState(true, "Deleting status...");
+            await _appService.DeleteEventAsync(eventId, CancellationToken.None);
+            SetBusyState(false, "Status deleted.");
+        }
+        catch (Exception ex)
+        {
+            SetBusyState(false, $"Delete failed: {ex.Message}");
+        }
+    }
 
     private async Task ConnectAsync()
     {
@@ -69,7 +337,6 @@ public partial class Form1 : Form
             }
             else if (_projects.Count > 0)
             {
-                // Push existing local list to Firestore on first connect.
                 await _projectsRepository.SaveAsync(_projects, CancellationToken.None);
             }
 
@@ -130,63 +397,6 @@ public partial class Form1 : Form
         }
     }
 
-    private void btnAddProject_Click(object sender, EventArgs e)
-    {
-        try
-        {
-            string name = txtProjectName.Text.Trim();
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                throw new InvalidOperationException("Project name cannot be empty.");
-            }
-
-            if (_projects.Any(p => string.Equals(p, name, StringComparison.OrdinalIgnoreCase)))
-            {
-                throw new InvalidOperationException("Project already exists.");
-            }
-
-            _projects.Add(name);
-            _projects.Sort(StringComparer.OrdinalIgnoreCase);
-            SaveProjects();
-            RebuildProjectsUi();
-            txtProjectName.Clear();
-            _ = TryPushProjectsAsync();
-            SetBusyState(false, $"Project '{name}' added.");
-        }
-        catch (Exception ex)
-        {
-            SetBusyState(false, $"Add failed: {ex.Message}");
-        }
-    }
-
-    private async void btnDeleteProject_Click(object sender, EventArgs e)
-    {
-        try
-        {
-            string? selected = lstProjects.SelectedItem as string;
-            if (string.IsNullOrWhiteSpace(selected))
-            {
-                throw new InvalidOperationException("Select a project to delete.");
-            }
-
-            if (string.Equals(_activeProject, selected, StringComparison.OrdinalIgnoreCase))
-            {
-                SetBusyState(true, "Project is active, switching to none first...");
-                await _appService.EmitIntentAsync(StateIntent.None(), CancellationToken.None);
-            }
-
-            _projects.RemoveAll(p => string.Equals(p, selected, StringComparison.OrdinalIgnoreCase));
-            SaveProjects();
-            RebuildProjectsUi();
-            _ = TryPushProjectsAsync();
-            SetBusyState(false, $"Project '{selected}' deleted.");
-        }
-        catch (Exception ex)
-        {
-            SetBusyState(false, $"Delete failed: {ex.Message}");
-        }
-    }
-
     private async void ProjectButtonOnClick(object? sender, EventArgs e)
     {
         try
@@ -208,8 +418,6 @@ public partial class Form1 : Form
 
     private void ConfigureTrackerUi()
     {
-        btnAddProject.Text = "Add";
-        btnDeleteProject.Text = "Delete";
         btnNone.Text = "None";
         lblStatus.Text = "Connecting...";
         Text = "ProjectTimeTracker";
@@ -223,7 +431,6 @@ public partial class Form1 : Form
             return;
         }
 
-        string source = isLocal ? "local" : "remote";
         string project = state.IsNone ? "none" : state.CurrentProject!;
         _activeProject = state.IsNone ? null : state.CurrentProject;
         UpdateActiveButtonStyles();
@@ -235,41 +442,45 @@ public partial class Form1 : Form
             ? ToMontreal(state.SinceUtc.Value).ToString("HH:mm:ss")
             : "-";
         lblStatus.Text = $"Current: {project} (since {sinceText})";
-        lstDocs.Items.Insert(0,
-            $"{ToMontreal(stateEvent.OccurredAtUtc):yyyy-MM-dd HH:mm:ss} [{source}] {stateEvent.EventType} {(stateEvent.ProjectName ?? "none")}");
+    }
 
-        while (lstDocs.Items.Count > 200)
+    private void AppServiceOnEventsChanged()
+    {
+        if (InvokeRequired)
         {
-            lstDocs.Items.RemoveAt(lstDocs.Items.Count - 1);
+            BeginInvoke(AppServiceOnEventsChanged);
+            return;
         }
+
+        RefreshStatusesView();
+    }
+
+    private void RefreshStatusesView()
+    {
+        IReadOnlyDictionary<Guid, StateEvent> events = _appService.AllEvents;
+        IEnumerable<StatusEntry> entries = events.Values.Select(e => new StatusEntry
+        {
+            EventId = e.EventId,
+            LocalTime = ToMontreal(e.OccurredAtUtc),
+            Source = "stored",
+            EventType = e.EventType,
+            Project = e.ProjectName ?? "none"
+        });
+        _statusesView.SetEntries(entries);
     }
 
     private void SetBusyState(bool busy, string message)
     {
         btnNone.Enabled = !busy;
-        btnAddProject.Enabled = !busy;
-        btnDeleteProject.Enabled = !busy;
-        txtProjectName.Enabled = !busy;
-        lstProjects.Enabled = !busy;
         flpProjectButtons.Enabled = !busy;
+        _projectsView.Enabled = !busy;
+        _statusesView.Enabled = !busy;
         lblStatus.Text = message;
     }
 
     private void RebuildProjectsUi()
     {
-        lstProjects.BeginUpdate();
-        try
-        {
-            lstProjects.Items.Clear();
-            foreach (string project in _projects)
-            {
-                lstProjects.Items.Add(project);
-            }
-        }
-        finally
-        {
-            lstProjects.EndUpdate();
-        }
+        _projectsView.SetProjects(_projects);
 
         flpProjectButtons.SuspendLayout();
         try
@@ -403,6 +614,7 @@ public partial class Form1 : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         _appService.StateChanged -= AppServiceOnStateChanged;
+        _appService.EventsChanged -= AppServiceOnEventsChanged;
         _appService.Dispose();
         _projectsRepository.Dispose();
         _reconnectTimer?.Dispose();
@@ -434,8 +646,6 @@ public partial class Form1 : Form
         _trayMenu = new ContextMenuStrip();
         _trayMenu.Closing += (_, e) =>
         {
-            // Keep the menu open after clicking an item; only close on
-            // explicit dismiss (click outside, Esc) or app shutdown.
             if (e.CloseReason == ToolStripDropDownCloseReason.ItemClicked)
             {
                 e.Cancel = true;

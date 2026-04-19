@@ -33,17 +33,35 @@ public sealed class FirestoreEventGateway : IDisposable
         CollectionReference eventsCollection = GetEventsCollection(db, _userId!);
 
         DocumentReference doc = eventsCollection.Document(stateEvent.EventId.ToString("N"));
-        await doc.SetAsync(new Dictionary<string, object?>
-        {
-            ["eventId"] = stateEvent.EventId.ToString("N"),
-            ["userId"] = stateEvent.UserId,
-            ["deviceId"] = stateEvent.DeviceId,
-            ["deviceSequence"] = stateEvent.DeviceSequence,
-            ["occurredAtUtc"] = Timestamp.FromDateTime(DateTime.SpecifyKind(stateEvent.OccurredAtUtc, DateTimeKind.Utc)),
-            ["eventType"] = stateEvent.EventType.ToString(),
-            ["projectName"] = stateEvent.ProjectName
-        }, cancellationToken: cancellationToken);
+        await doc.SetAsync(BuildPayload(stateEvent), cancellationToken: cancellationToken);
     }
+
+    public Task UpdateAsync(StateEvent stateEvent, CancellationToken cancellationToken) =>
+        AppendAsync(stateEvent, cancellationToken); // SetAsync overwrites the doc
+
+    public async Task DeleteAsync(Guid eventId, CancellationToken cancellationToken)
+    {
+        if (!IsConnected)
+        {
+            throw new InvalidOperationException("Firestore gateway is not connected.");
+        }
+
+        FirestoreDb db = await _session.CreateDbAsync(cancellationToken);
+        CollectionReference eventsCollection = GetEventsCollection(db, _userId!);
+        DocumentReference doc = eventsCollection.Document(eventId.ToString("N"));
+        await doc.DeleteAsync(cancellationToken: cancellationToken);
+    }
+
+    private static Dictionary<string, object?> BuildPayload(StateEvent stateEvent) => new()
+    {
+        ["eventId"] = stateEvent.EventId.ToString("N"),
+        ["userId"] = stateEvent.UserId,
+        ["deviceId"] = stateEvent.DeviceId,
+        ["deviceSequence"] = stateEvent.DeviceSequence,
+        ["occurredAtUtc"] = Timestamp.FromDateTime(DateTime.SpecifyKind(stateEvent.OccurredAtUtc, DateTimeKind.Utc)),
+        ["eventType"] = stateEvent.EventType.ToString(),
+        ["projectName"] = stateEvent.ProjectName
+    };
 
     public async Task<IReadOnlyList<StateEvent>> ReadAllAsync(CancellationToken cancellationToken)
     {
@@ -62,7 +80,14 @@ public sealed class FirestoreEventGateway : IDisposable
         return snapshot.Documents.Select(MapDocument).ToArray();
     }
 
-    public async Task StartListeningAsync(Action<StateEvent> onEvent, Action<Exception>? onError, CancellationToken cancellationToken)
+    public async Task StartListeningAsync(Action<StateEvent> onEvent, Action<Exception>? onError, CancellationToken cancellationToken) =>
+        await StartListeningAsync(onEvent, onRemoved: null, onError, cancellationToken);
+
+    public async Task StartListeningAsync(
+        Action<StateEvent> onEvent,
+        Action<Guid>? onRemoved,
+        Action<Exception>? onError,
+        CancellationToken cancellationToken)
     {
         if (!IsConnected)
         {
@@ -84,6 +109,13 @@ public sealed class FirestoreEventGateway : IDisposable
                 if (change.ChangeType is DocumentChange.Type.Added or DocumentChange.Type.Modified)
                 {
                     onEvent(MapDocument(change.Document));
+                }
+                else if (change.ChangeType == DocumentChange.Type.Removed && onRemoved is not null)
+                {
+                    if (Guid.TryParseExact(change.Document.Id, "N", out Guid removedId))
+                    {
+                        onRemoved(removedId);
+                    }
                 }
             }
         });
@@ -128,4 +160,3 @@ public sealed class FirestoreEventGateway : IDisposable
         _ = StopListeningAsync();
     }
 }
-
