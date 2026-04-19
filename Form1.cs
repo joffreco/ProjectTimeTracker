@@ -437,6 +437,7 @@ public partial class Form1 : Form
         if (_trayIcon is not null)
         {
             _trayIcon.Text = state.IsNone ? "ProjectTimeTracker - none" : $"ProjectTimeTracker - {state.CurrentProject}";
+            UpdateTrayIconImage(state.IsNone ? null : state.CurrentProject);
         }
         string sinceText = state.SinceUtc.HasValue
             ? ToMontreal(state.SinceUtc.Value).ToString("HH:mm:ss")
@@ -678,6 +679,14 @@ public partial class Form1 : Form
         _trayAutostartItem.CheckedChanged += TrayAutostartItem_CheckedChanged;
         _trayMenu.Items.Add(_trayAutostartItem);
 
+        ToolStripMenuItem pinTrayItem = new("Always show tray icon… (Windows settings)");
+        pinTrayItem.Click += (_, _) =>
+        {
+            _trayMenu?.Close(ToolStripDropDownCloseReason.CloseCalled);
+            OpenTaskbarSettings();
+        };
+        _trayMenu.Items.Add(pinTrayItem);
+
         _trayMenu.Items.Add(new ToolStripSeparator());
 
         ToolStripMenuItem exitItem = new("Exit");
@@ -696,6 +705,7 @@ public partial class Form1 : Form
             Visible = true,
             ContextMenuStrip = _trayMenu
         };
+        UpdateTrayIconImage(null);
         _trayIcon.MouseClick += (_, e) =>
         {
             if (e.Button == MouseButtons.Left)
@@ -705,6 +715,66 @@ public partial class Form1 : Form
         };
 
         RebuildTrayProjectsMenu();
+        ShowFirstRunPinHintIfNeeded();
+    }
+
+    private static void OpenTaskbarSettings()
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ms-settings:taskbar",
+                UseShellExecute = true
+            });
+        }
+        catch
+        {
+            // Fallback: ignore; user can open Settings manually.
+        }
+    }
+
+    private string PinHintFlagPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ProjectTimeTracker",
+        "tray-pin-hint.flag");
+
+    private void ShowFirstRunPinHintIfNeeded()
+    {
+        try
+        {
+            if (File.Exists(PinHintFlagPath) || _trayIcon is null)
+            {
+                return;
+            }
+
+            // Delay a moment so the icon is registered before showing the balloon.
+            System.Windows.Forms.Timer t = new() { Interval = 1500 };
+            t.Tick += (_, _) =>
+            {
+                t.Stop();
+                t.Dispose();
+                try
+                {
+                    _trayIcon?.ShowBalloonTip(
+                        8000,
+                        "Pin ProjectTimeTracker to the taskbar",
+                        "Open Taskbar settings → Other system tray icons → enable ProjectTimeTracker so the icon stays visible.",
+                        ToolTipIcon.Info);
+                    Directory.CreateDirectory(Path.GetDirectoryName(PinHintFlagPath)!);
+                    File.WriteAllText(PinHintFlagPath, DateTime.UtcNow.ToString("o"));
+                }
+                catch
+                {
+                    // Non-fatal.
+                }
+            };
+            t.Start();
+        }
+        catch
+        {
+            // Non-fatal.
+        }
     }
 
     private void TrayAutostartItem_CheckedChanged(object? sender, EventArgs e)
@@ -821,5 +891,113 @@ public partial class Form1 : Form
     {
         DateTime asUtc = DateTime.SpecifyKind(utc, DateTimeKind.Utc);
         return TimeZoneInfo.ConvertTimeFromUtc(asUtc, MontrealTimeZone);
+    }
+
+    private IntPtr _currentTrayHIcon = IntPtr.Zero;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern bool DestroyIcon(IntPtr handle);
+
+    private void UpdateTrayIconImage(string? activeProject)
+    {
+        if (_trayIcon is null)
+        {
+            return;
+        }
+
+        Color color = GetProjectColor(activeProject);
+        IntPtr newHIcon;
+        Icon newIcon = BuildSolidIcon(color, activeProject, out newHIcon);
+        _trayIcon.Icon = newIcon;
+
+        // Free the previous unmanaged icon handle (only if we created it).
+        if (_currentTrayHIcon != IntPtr.Zero)
+        {
+            DestroyIcon(_currentTrayHIcon);
+        }
+        _currentTrayHIcon = newHIcon;
+    }
+
+    private static Color GetProjectColor(string? activeProject)
+    {
+        if (string.IsNullOrWhiteSpace(activeProject))
+        {
+            return Color.Gray;
+        }
+        if (string.Equals(activeProject, "Scolago", StringComparison.OrdinalIgnoreCase))
+        {
+            return Color.FromArgb(255, 140, 0); // orange
+        }
+        if (string.Equals(activeProject, "Comunik", StringComparison.OrdinalIgnoreCase))
+        {
+            return Color.FromArgb(0, 110, 200); // blue
+        }
+        return DeterministicColor(activeProject);
+    }
+
+    private static Color DeterministicColor(string project)
+    {
+        int hash = 0;
+        foreach (char c in project)
+        {
+            hash = unchecked(hash * 31 + char.ToLowerInvariant(c));
+        }
+        int hue = Math.Abs(hash) % 360;
+        return HslToRgb(hue, 0.65, 0.5);
+    }
+
+    private static Color HslToRgb(double h, double s, double l)
+    {
+        double c = (1 - Math.Abs(2 * l - 1)) * s;
+        double hp = h / 60.0;
+        double x = c * (1 - Math.Abs(hp % 2 - 1));
+        double r = 0, g = 0, b = 0;
+        if (hp < 1) { r = c; g = x; }
+        else if (hp < 2) { r = x; g = c; }
+        else if (hp < 3) { g = c; b = x; }
+        else if (hp < 4) { g = x; b = c; }
+        else if (hp < 5) { r = x; b = c; }
+        else { r = c; b = x; }
+        double m = l - c / 2;
+        return Color.FromArgb(
+            Math.Clamp((int)Math.Round((r + m) * 255), 0, 255),
+            Math.Clamp((int)Math.Round((g + m) * 255), 0, 255),
+            Math.Clamp((int)Math.Round((b + m) * 255), 0, 255));
+    }
+
+    private static Icon BuildSolidIcon(Color color, string? project, out IntPtr hIcon)
+    {
+        const int size = 32;
+        using Bitmap bmp = new(size, size);
+        using (Graphics g = Graphics.FromImage(bmp))
+        {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.Clear(Color.Transparent);
+
+            using SolidBrush fill = new(color);
+            g.FillEllipse(fill, 1, 1, size - 2, size - 2);
+
+            using Pen border = new(Color.FromArgb(160, 0, 0, 0), 1.5f);
+            g.DrawEllipse(border, 1, 1, size - 2, size - 2);
+
+            if (!string.IsNullOrWhiteSpace(project))
+            {
+                char letter = char.ToUpperInvariant(project!.Trim()[0]);
+                Color textColor = (color.R * 0.299 + color.G * 0.587 + color.B * 0.114) < 140
+                    ? Color.White
+                    : Color.Black;
+                using Font font = new("Segoe UI", 16f, FontStyle.Bold, GraphicsUnit.Pixel);
+                using SolidBrush textBrush = new(textColor);
+                using StringFormat sf = new()
+                {
+                    Alignment = StringAlignment.Center,
+                    LineAlignment = StringAlignment.Center
+                };
+                g.DrawString(letter.ToString(), font, textBrush, new RectangleF(0, 0, size, size), sf);
+            }
+        }
+
+        hIcon = bmp.GetHicon();
+        return Icon.FromHandle(hIcon);
     }
 }
