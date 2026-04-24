@@ -1,27 +1,86 @@
-/obj/Debug/net9.0-windows/ProjectTimeTracker.AssemblyInfo.cs
-/obj/Debug/net9.0-windows/ProjectTimeTracker.AssemblyInfoInputs.cache
-/obj/Debug/net9.0-windows/ProjectTimeTracker.assets.cache
-/ProjectTimeTracker.csproj
-/obj/Debug/net9.0-windows/ProjectTimeTracker.csproj.AssemblyReference.cache
-/obj/Debug/net9.0-windows/ProjectTimeTracker.csproj.CoreCompileInputs.cache
-/obj/Debug/net9.0-windows/ProjectTimeTracker.csproj.FileListAbsolute.txt
-/obj/ProjectTimeTracker.csproj.nuget.dgspec.json
-/obj/ProjectTimeTracker.csproj.nuget.g.props
-/obj/ProjectTimeTracker.csproj.nuget.g.targets
-/ProjectTimeTracker.csproj.user
-/bin/Debug/net9.0-windows/ProjectTimeTracker.deps.json
-/bin/Debug/net9.0-windows/ProjectTimeTracker.dll
-/obj/Debug/net9.0-windows/ref/ProjectTimeTracker.dll
-/obj/Debug/net9.0-windows/refint/ProjectTimeTracker.dll
-/obj/Debug/net9.0-windows/ProjectTimeTracker.dll
-/bin/Debug/net9.0-windows/ProjectTimeTracker.exe
-/obj/Debug/net9.0-windows/ProjectTimeTracker.GeneratedMSBuildEditorConfig.editorconfig
-/obj/Debug/net9.0-windows/ProjectTimeTracker.genruntimeconfig.cache
-/obj/Debug/net9.0-windows/ProjectTimeTracker.GlobalUsings.g.cs
-/bin/Debug/net9.0-windows/ProjectTimeTracker.pdb
-/obj/Debug/net9.0-windows/ProjectTimeTracker.pdb
-/bin/Debug/net9.0-windows/ProjectTimeTracker.runtimeconfig.json
-/obj/Debug/net9.0-windows/ProjectTimeTracker.sourcelink.json
+# ---------------------------------------------------------------------------
+# .gitignore for ProjectTimeTracker (.NET 9 WinForms)
+# ---------------------------------------------------------------------------
 
-# Embedded OAuth client secret (do not commit)
-/Secrets/client_secret.json
+# ---- Build output ---------------------------------------------------------
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Ll]og/
+[Ll]ogs/
+artifacts/
+publish/
+*.binlog
+
+# ---- Visual Studio / Rider / VS Code -------------------------------------
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userprefs
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+*.csproj.user
+
+# ---- Rider / ReSharper ----------------------------------------------------
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings
+!*.sln.DotSettings
+
+# ---- NuGet ----------------------------------------------------------------
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+project.lock.json
+project.fragment.lock.json
+.nuget/
+
+# ---- Test results / coverage ---------------------------------------------
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+coverage*.info
+
+# ---- Debug / profiling ----------------------------------------------------
+*.pdb
+*.dbg
+*.cache
+*.pidb
+*.svclog
+*.psess
+*.vsp
+*.vspx
+*.sap
+
+# ---- OS files -------------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# ---- Secrets / credentials -----------------------------------------------
+# Keep the README explaining how to add the secret, ignore everything else.
+Secrets/*
+!Secrets/README.md
+*.pfx
+*.snk
+appsettings.*.local.json
+secrets.json
+
+# ---- Local app data dumps (if ever copied into repo) ---------------------
+event-queue.json
+device.id
+
+# ---- Misc -----------------------------------------------------------------
+*.swp
+*.bak
+*.tmp
+*.log
