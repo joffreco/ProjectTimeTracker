@@ -62,6 +62,11 @@ public sealed class TrackerAppService : IDisposable
         await _session.ConnectAsync(cancellationToken);
         _gateway.ConfigureUser(userId);
 
+        // One-time (idempotent) migration of events from the legacy per-user sub-collection
+        // to the new top-level `timeTrackerEvents` collection. Runs on every connect; it's a
+        // no-op once everything has been moved.
+        await _gateway.MigrateLegacyEventsAsync(cancellationToken);
+
         IReadOnlyList<StateEvent> existingEvents = await _gateway.ReadAllAsync(cancellationToken);
         foreach (StateEvent stateEvent in existingEvents)
         {
