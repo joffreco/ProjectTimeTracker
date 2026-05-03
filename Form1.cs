@@ -10,12 +10,16 @@ public partial class Form1 : Form
 {
     private const string NavProjects = "Projects";
     private const string NavStatuses = "Statuses";
+    private const string NavInvoicing = "Invoicing";
 
     private readonly TrackerAppService _appService;
     private readonly ProjectsRepository _projectsRepository;
-    private readonly List<string> _projects = [];
+    private readonly InvoiceConfirmationsRepository _invoiceRepository;
+    private readonly List<ProjectDefinition> _projects = [];
     private readonly Dictionary<string, Button> _projectButtons = new(StringComparer.OrdinalIgnoreCase);
     private string? _activeProject;
+    private IReadOnlyDictionary<string, DateTime> _invoiceConfirmations =
+        new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 
     private static readonly TimeZoneInfo MontrealTimeZone = ResolveMontrealTimeZone();
 
@@ -28,8 +32,10 @@ public partial class Form1 : Form
 
     private readonly ProjectsView _projectsView = new() { Dock = DockStyle.Fill };
     private readonly StatusesView _statusesView = new() { Dock = DockStyle.Fill };
+    private readonly InvoicingView _invoicingView = new() { Dock = DockStyle.Fill };
 
     private System.Windows.Forms.Timer? _reconnectTimer;
+    private System.Windows.Forms.Timer? _invoicingRefreshTimer;
     private bool _isConnected;
 
     private string ProjectsFilePath => Path.Combine(
@@ -37,10 +43,11 @@ public partial class Form1 : Form
         "ProjectTimeTracker",
         "projects.json");
 
-    public Form1(TrackerAppService appService, ProjectsRepository projectsRepository)
+    public Form1(TrackerAppService appService, ProjectsRepository projectsRepository, InvoiceConfirmationsRepository invoiceRepository)
     {
         _appService = appService;
         _projectsRepository = projectsRepository;
+        _invoiceRepository = invoiceRepository;
         InitializeComponent();
         ConfigureTrackerUi();
         InitializeNavigation();
@@ -65,47 +72,72 @@ public partial class Form1 : Form
     {
         pnlContent.Controls.Add(_projectsView);
         pnlContent.Controls.Add(_statusesView);
+        pnlContent.Controls.Add(_invoicingView);
         _projectsView.Visible = true;
         _statusesView.Visible = false;
+        _invoicingView.Visible = false;
 
         _projectsView.AddRequested += (_, _) => HandleAddProject();
         _projectsView.EditRequested += (_, name) => HandleEditProject(name);
         _projectsView.DeleteRequested += (_, name) => _ = HandleDeleteProjectAsync(name);
+        _projectsView.InvoiceableToggled += (_, args) => HandleInvoiceableToggled(args.ProjectName, args.IsInvoiceable);
 
         _statusesView.AddRequested += (_, _) => _ = HandleAddStatusAsync();
         _statusesView.EditRequested += (_, eventId) => _ = HandleEditStatusAsync(eventId);
         _statusesView.DeleteRequested += (_, eventId) => _ = HandleDeleteStatusAsync(eventId);
 
+        _invoicingView.ConfirmRequested += (_, args) => _ = HandleConfirmInvoiceAsync(args.Project, args.Year, args.Month);
+        _invoicingView.UnconfirmRequested += (_, args) => _ = HandleUnconfirmInvoiceAsync(args.Project, args.Year, args.Month);
+
         lstNav.Items.Add(NavProjects);
         lstNav.Items.Add(NavStatuses);
+        lstNav.Items.Add(NavInvoicing);
         lstNav.SelectedIndexChanged += (_, _) => SwitchView(lstNav.SelectedItem as string);
         lstNav.SelectedIndex = 0;
+
+        _invoicingRefreshTimer = new System.Windows.Forms.Timer { Interval = 60_000 };
+        _invoicingRefreshTimer.Tick += (_, _) =>
+        {
+            if (_invoicingView.Visible)
+            {
+                RefreshInvoicingView();
+            }
+        };
+        _invoicingRefreshTimer.Start();
     }
 
     private void SwitchView(string? selection)
     {
         bool projects = string.Equals(selection, NavProjects, StringComparison.Ordinal);
+        bool invoicing = string.Equals(selection, NavInvoicing, StringComparison.Ordinal);
+        bool statuses = !projects && !invoicing;
         _projectsView.Visible = projects;
-        _statusesView.Visible = !projects;
+        _statusesView.Visible = statuses;
+        _invoicingView.Visible = invoicing;
+        if (invoicing)
+        {
+            RefreshInvoicingView();
+        }
     }
 
     private void HandleAddProject()
     {
         try
         {
-            string? name = InputDialog.Prompt(this, "Add project", "Project name:");
-            if (name is null)
+            (string Name, bool IsInvoiceable)? result = ProjectEditDialog.Prompt(this, "Add project", "Project name:");
+            if (result is null)
             {
                 return;
             }
 
-            if (_projects.Any(p => string.Equals(p, name, StringComparison.OrdinalIgnoreCase)))
+            string name = result.Value.Name;
+            if (_projects.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)))
             {
                 throw new InvalidOperationException("Project already exists.");
             }
 
-            _projects.Add(name);
-            _projects.Sort(StringComparer.OrdinalIgnoreCase);
+            _projects.Add(new ProjectDefinition(name, result.Value.IsInvoiceable));
+            SortProjects();
             SaveProjects();
             RebuildProjectsUi();
             _ = TryPushProjectsAsync();
@@ -121,26 +153,32 @@ public partial class Form1 : Form
     {
         try
         {
-            string? newName = InputDialog.Prompt(this, "Rename project", "New name:", oldName);
-            if (newName is null || string.Equals(newName, oldName, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            if (_projects.Any(p => string.Equals(p, newName, StringComparison.OrdinalIgnoreCase)
-                                    && !string.Equals(p, oldName, StringComparison.OrdinalIgnoreCase)))
-            {
-                throw new InvalidOperationException("Another project with this name already exists.");
-            }
-
-            int index = _projects.FindIndex(p => string.Equals(p, oldName, StringComparison.OrdinalIgnoreCase));
-            if (index < 0)
+            int existingIndex = _projects.FindIndex(p => string.Equals(p.Name, oldName, StringComparison.OrdinalIgnoreCase));
+            if (existingIndex < 0)
             {
                 throw new InvalidOperationException("Project not found.");
             }
 
-            _projects[index] = newName;
-            _projects.Sort(StringComparer.OrdinalIgnoreCase);
+            ProjectDefinition existing = _projects[existingIndex];
+            (string Name, bool IsInvoiceable)? result = ProjectEditDialog.Prompt(
+                this, "Edit project", "Project name:", existing.Name, existing.IsInvoiceable);
+            if (result is null)
+            {
+                return;
+            }
+
+            string newName = result.Value.Name;
+            bool newInvoiceable = result.Value.IsInvoiceable;
+            bool nameChanged = !string.Equals(newName, oldName, StringComparison.Ordinal);
+
+            if (nameChanged && _projects.Any(p => string.Equals(p.Name, newName, StringComparison.OrdinalIgnoreCase)
+                                    && !string.Equals(p.Name, oldName, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException("Another project with this name already exists.");
+            }
+
+            _projects[existingIndex] = new ProjectDefinition(newName, newInvoiceable);
+            SortProjects();
 
             if (string.Equals(_activeProject, oldName, StringComparison.OrdinalIgnoreCase))
             {
@@ -150,11 +188,36 @@ public partial class Form1 : Form
             SaveProjects();
             RebuildProjectsUi();
             _ = TryPushProjectsAsync();
-            SetBusyState(false, $"Renamed '{oldName}' → '{newName}'.");
+            SetBusyState(false, nameChanged ? $"Renamed '{oldName}' → '{newName}'." : $"Project '{newName}' updated.");
         }
         catch (Exception ex)
         {
-            SetBusyState(false, $"Rename failed: {ex.Message}");
+            SetBusyState(false, $"Edit failed: {ex.Message}");
+        }
+    }
+
+    private void HandleInvoiceableToggled(string projectName, bool isInvoiceable)
+    {
+        try
+        {
+            int idx = _projects.FindIndex(p => string.Equals(p.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (idx < 0)
+            {
+                return;
+            }
+            if (_projects[idx].IsInvoiceable == isInvoiceable)
+            {
+                return;
+            }
+            _projects[idx] = _projects[idx] with { IsInvoiceable = isInvoiceable };
+            SaveProjects();
+            _ = TryPushProjectsAsync();
+            RefreshInvoicingView();
+            SetBusyState(false, $"'{projectName}' invoiceable: {(isInvoiceable ? "yes" : "no")}.");
+        }
+        catch (Exception ex)
+        {
+            SetBusyState(false, $"Invoiceable toggle failed: {ex.Message}");
         }
     }
 
@@ -178,7 +241,7 @@ public partial class Form1 : Form
                 await _appService.EmitIntentAsync(StateIntent.None(), CancellationToken.None);
             }
 
-            _projects.RemoveAll(p => string.Equals(p, name, StringComparison.OrdinalIgnoreCase));
+            _projects.RemoveAll(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
             SaveProjects();
             RebuildProjectsUi();
             _ = TryPushProjectsAsync();
@@ -190,12 +253,45 @@ public partial class Form1 : Form
         }
     }
 
+    private async Task HandleConfirmInvoiceAsync(string projectName, int year, int month)
+    {
+        try
+        {
+            SetBusyState(true, $"Confirming invoice {projectName} {year}-{month:D2}...");
+            await _invoiceRepository.ConfirmAsync(projectName, year, month, CancellationToken.None);
+            SetBusyState(false, $"Invoice confirmed: {projectName} {year}-{month:D2}.");
+        }
+        catch (Exception ex)
+        {
+            SetBusyState(false, $"Confirm failed: {ex.Message}");
+        }
+    }
+
+    private async Task HandleUnconfirmInvoiceAsync(string projectName, int year, int month)
+    {
+        try
+        {
+            SetBusyState(true, $"Removing invoice confirmation {projectName} {year}-{month:D2}...");
+            await _invoiceRepository.UnconfirmAsync(projectName, year, month, CancellationToken.None);
+            SetBusyState(false, $"Invoice un-confirmed: {projectName} {year}-{month:D2}.");
+        }
+        catch (Exception ex)
+        {
+            SetBusyState(false, $"Un-confirm failed: {ex.Message}");
+        }
+    }
+
+    private void SortProjects()
+    {
+        _projects.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+    }
+
     private async Task HandleAddStatusAsync()
     {
         try
         {
             DateTime initialLocal = ToMontreal(DateTime.UtcNow);
-            using StatusEditDialog dialog = new(_projects, initialLocal, _activeProject);
+            using StatusEditDialog dialog = new(_projects.Select(p => p.Name), initialLocal, _activeProject);
             if (dialog.ShowDialog(this) != DialogResult.OK)
             {
                 return;
@@ -226,7 +322,7 @@ public partial class Form1 : Form
             }
 
             DateTime initialLocal = ToMontreal(existing.OccurredAtUtc);
-            using StatusEditDialog dialog = new(_projects, initialLocal, existing.ProjectName);
+            using StatusEditDialog dialog = new(_projects.Select(p => p.Name), initialLocal, existing.ProjectName);
             if (dialog.ShowDialog(this) != DialogResult.OK)
             {
                 return;
@@ -330,7 +426,7 @@ public partial class Form1 : Form
             await _appService.ConnectAsync("joff", CancellationToken.None);
 
             _projectsRepository.ConfigureUser("joff");
-            IReadOnlyList<string> remoteProjects = await _projectsRepository.ReadAsync(CancellationToken.None);
+            IReadOnlyList<ProjectDefinition> remoteProjects = await _projectsRepository.ReadAsync(CancellationToken.None);
             if (remoteProjects.Count > 0)
             {
                 ApplyRemoteProjects(remoteProjects);
@@ -349,6 +445,26 @@ public partial class Form1 : Form
                 else
                 {
                     ApplyRemoteProjects(items);
+                }
+            }, CancellationToken.None);
+
+            _invoiceRepository.ConfigureUser("joff");
+            _invoiceConfirmations = await _invoiceRepository.ReadAsync(CancellationToken.None);
+            RefreshInvoicingView();
+            await _invoiceRepository.StartListeningAsync(entries =>
+            {
+                if (InvokeRequired)
+                {
+                    BeginInvoke((Action)(() =>
+                    {
+                        _invoiceConfirmations = entries;
+                        RefreshInvoicingView();
+                    }));
+                }
+                else
+                {
+                    _invoiceConfirmations = entries;
+                    RefreshInvoicingView();
                 }
             }, CancellationToken.None);
 
@@ -468,6 +584,20 @@ public partial class Form1 : Form
             Project = e.ProjectName ?? "none"
         });
         _statusesView.SetEntries(entries, ToMontreal(DateTime.UtcNow));
+
+        RefreshInvoicingView();
+    }
+
+    private void RefreshInvoicingView()
+    {
+        IReadOnlyDictionary<Guid, StateEvent> events = _appService.AllEvents;
+        List<InvoicingView.EventPoint> points = events.Values
+            .Select(e => new InvoicingView.EventPoint(
+                e.EventId,
+                ToMontreal(e.OccurredAtUtc),
+                e.EventType == StateEventType.NoneSelected ? null : e.ProjectName))
+            .ToList();
+        _invoicingView.SetData(_projects, points, _invoiceConfirmations, ToMontreal(DateTime.UtcNow));
     }
 
     private void SetBusyState(bool busy, string message)
@@ -476,6 +606,7 @@ public partial class Form1 : Form
         flpProjectButtons.Enabled = !busy;
         _projectsView.Enabled = !busy;
         _statusesView.Enabled = !busy;
+        _invoicingView.Enabled = !busy;
         lblStatus.Text = message;
     }
 
@@ -489,17 +620,17 @@ public partial class Form1 : Form
             flpProjectButtons.Controls.Clear();
             _projectButtons.Clear();
 
-            foreach (string project in _projects)
+            foreach (ProjectDefinition project in _projects)
             {
                 Button projectButton = new()
                 {
                     AutoSize = true,
                     Margin = new Padding(4),
-                    Tag = project,
-                    Text = project
+                    Tag = project.Name,
+                    Text = project.Name
                 };
                 projectButton.Click += ProjectButtonOnClick;
-                _projectButtons[project] = projectButton;
+                _projectButtons[project.Name] = projectButton;
                 flpProjectButtons.Controls.Add(projectButton);
             }
         }
@@ -510,6 +641,7 @@ public partial class Form1 : Form
 
         UpdateActiveButtonStyles();
         RebuildTrayProjectsMenu();
+        RefreshInvoicingView();
     }
 
     private void UpdateActiveButtonStyles()
@@ -556,15 +688,44 @@ public partial class Form1 : Form
         try
         {
             string json = File.ReadAllText(ProjectsFilePath);
-            string[]? loaded = JsonSerializer.Deserialize<string[]>(json);
-            if (loaded is null)
+            _projects.Clear();
+
+            // New format: array of { name, invoiceable }.
+            try
             {
-                return;
+                ProjectDefinitionDto[]? loaded = JsonSerializer.Deserialize<ProjectDefinitionDto[]>(json);
+                if (loaded is not null && loaded.Length > 0 && loaded.Any(d => !string.IsNullOrWhiteSpace(d.Name)))
+                {
+                    foreach (ProjectDefinitionDto dto in loaded)
+                    {
+                        if (string.IsNullOrWhiteSpace(dto.Name))
+                        {
+                            continue;
+                        }
+                        _projects.Add(new ProjectDefinition(dto.Name.Trim(), dto.Invoiceable));
+                    }
+                    SortProjects();
+                    return;
+                }
+            }
+            catch (JsonException)
+            {
+                // Fall through to legacy parsing.
             }
 
-            _projects.Clear();
-            _projects.AddRange(loaded.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p.Trim()));
-            _projects.Sort(StringComparer.OrdinalIgnoreCase);
+            // Legacy format: array of strings.
+            string[]? legacy = JsonSerializer.Deserialize<string[]>(json);
+            if (legacy is not null)
+            {
+                foreach (string name in legacy)
+                {
+                    if (!string.IsNullOrWhiteSpace(name))
+                    {
+                        _projects.Add(new ProjectDefinition(name.Trim(), false));
+                    }
+                }
+                SortProjects();
+            }
         }
         catch
         {
@@ -576,14 +737,23 @@ public partial class Form1 : Form
     {
         string directory = Path.GetDirectoryName(ProjectsFilePath)!;
         Directory.CreateDirectory(directory);
-        string json = JsonSerializer.Serialize(_projects);
+        ProjectDefinitionDto[] dtos = _projects
+            .Select(p => new ProjectDefinitionDto { Name = p.Name, Invoiceable = p.IsInvoiceable })
+            .ToArray();
+        string json = JsonSerializer.Serialize(dtos);
         File.WriteAllText(ProjectsFilePath, json);
     }
 
-    private void ApplyRemoteProjects(IReadOnlyList<string> remote)
+    private sealed class ProjectDefinitionDto
+    {
+        public string Name { get; set; } = string.Empty;
+        public bool Invoiceable { get; set; }
+    }
+
+    private void ApplyRemoteProjects(IReadOnlyList<ProjectDefinition> remote)
     {
         bool changed = remote.Count != _projects.Count
-                       || !remote.SequenceEqual(_projects, StringComparer.OrdinalIgnoreCase);
+                       || !remote.SequenceEqual(_projects);
         if (!changed)
         {
             return;
@@ -591,6 +761,7 @@ public partial class Form1 : Form
 
         _projects.Clear();
         _projects.AddRange(remote);
+        SortProjects();
         SaveProjects();
         RebuildProjectsUi();
     }
@@ -618,7 +789,9 @@ public partial class Form1 : Form
         _appService.EventsChanged -= AppServiceOnEventsChanged;
         _appService.Dispose();
         _projectsRepository.Dispose();
+        _invoiceRepository.Dispose();
         _reconnectTimer?.Dispose();
+        _invoicingRefreshTimer?.Dispose();
         _trayIcon?.Dispose();
         _trayMenu?.Dispose();
         base.OnFormClosed(e);
@@ -837,9 +1010,9 @@ public partial class Form1 : Form
             return;
         }
 
-        foreach (string project in _projects)
+        foreach (ProjectDefinition project in _projects)
         {
-            string captured = project;
+            string captured = project.Name;
             ToolStripMenuItem item = new(captured) { Tag = captured };
             item.Click += async (_, _) => await SafeEmitIntentAsync(StateIntent.ForProject(captured));
             _trayMenu.Items.Insert(insertIndex, item);

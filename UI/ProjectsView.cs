@@ -1,24 +1,38 @@
+using ProjectTimeTracker.Domain;
+
 namespace ProjectTimeTracker.UI;
 
 internal sealed class ProjectsView : UserControl
 {
-    private readonly ListBox _listBox = new()
+    private readonly ListView _listView = new()
     {
         Dock = DockStyle.Fill,
-        IntegralHeight = false
+        View = View.Details,
+        FullRowSelect = true,
+        MultiSelect = false,
+        CheckBoxes = true,
+        HideSelection = false,
+        GridLines = false
     };
 
     private readonly Button _addButton = new() { Text = "Add", Width = 80 };
     private readonly Button _editButton = new() { Text = "Edit", Width = 80 };
     private readonly Button _deleteButton = new() { Text = "Delete", Width = 80 };
 
+    private bool _suppressItemCheck;
+
     public event EventHandler? AddRequested;
     public event EventHandler<string>? EditRequested;
     public event EventHandler<string>? DeleteRequested;
+    /// <summary>Raised when the user toggles the invoiceable checkbox of a project.</summary>
+    public event EventHandler<(string ProjectName, bool IsInvoiceable)>? InvoiceableToggled;
 
     public ProjectsView()
     {
         Padding = new Padding(8);
+
+        _listView.Columns.Add("Project", 240);
+        _listView.Columns.Add("Invoiceable", 100);
 
         FlowLayoutPanel buttonsPanel = new()
         {
@@ -31,63 +45,99 @@ internal sealed class ProjectsView : UserControl
         buttonsPanel.Controls.Add(_editButton);
         buttonsPanel.Controls.Add(_deleteButton);
 
-        Controls.Add(_listBox);
+        Controls.Add(_listView);
         Controls.Add(buttonsPanel);
 
         _addButton.Click += (_, _) => AddRequested?.Invoke(this, EventArgs.Empty);
         _editButton.Click += (_, _) =>
         {
-            if (_listBox.SelectedItem is string name)
+            if (SelectedName() is { } name)
             {
                 EditRequested?.Invoke(this, name);
             }
         };
         _deleteButton.Click += (_, _) =>
         {
-            if (_listBox.SelectedItem is string name)
+            if (SelectedName() is { } name)
             {
                 DeleteRequested?.Invoke(this, name);
             }
         };
 
-        _listBox.SelectedIndexChanged += (_, _) => UpdateButtonStates();
+        _listView.SelectedIndexChanged += (_, _) => UpdateButtonStates();
+        _listView.ItemChecked += (_, e) =>
+        {
+            if (_suppressItemCheck)
+            {
+                return;
+            }
+            if (e.Item.Tag is string name)
+            {
+                e.Item.SubItems[1].Text = e.Item.Checked ? "Yes" : "No";
+                InvoiceableToggled?.Invoke(this, (name, e.Item.Checked));
+            }
+        };
+        _listView.MouseDoubleClick += (_, _) =>
+        {
+            if (SelectedName() is { } name)
+            {
+                EditRequested?.Invoke(this, name);
+            }
+        };
+
         UpdateButtonStates();
     }
 
-    public void SetProjects(IEnumerable<string> projects)
+    public void SetProjects(IEnumerable<ProjectDefinition> projects)
     {
-        string? previous = _listBox.SelectedItem as string;
-        _listBox.BeginUpdate();
+        string? previous = SelectedName();
+        _suppressItemCheck = true;
+        _listView.BeginUpdate();
         try
         {
-            _listBox.Items.Clear();
-            foreach (string p in projects)
+            _listView.Items.Clear();
+            foreach (ProjectDefinition p in projects)
             {
-                _listBox.Items.Add(p);
+                ListViewItem item = new(p.Name) { Tag = p.Name, Checked = p.IsInvoiceable };
+                item.SubItems.Add(p.IsInvoiceable ? "Yes" : "No");
+                _listView.Items.Add(item);
             }
 
             if (previous is not null)
             {
-                int idx = _listBox.Items.IndexOf(previous);
-                if (idx >= 0)
+                foreach (ListViewItem item in _listView.Items)
                 {
-                    _listBox.SelectedIndex = idx;
+                    if (string.Equals(item.Tag as string, previous, StringComparison.OrdinalIgnoreCase))
+                    {
+                        item.Selected = true;
+                        item.Focused = true;
+                        break;
+                    }
                 }
             }
         }
         finally
         {
-            _listBox.EndUpdate();
+            _listView.EndUpdate();
+            _suppressItemCheck = false;
         }
 
         UpdateButtonStates();
     }
 
+    private string? SelectedName()
+    {
+        if (_listView.SelectedItems.Count == 0)
+        {
+            return null;
+        }
+        return _listView.SelectedItems[0].Tag as string;
+    }
+
     private void UpdateButtonStates()
     {
-        bool hasSelection = _listBox.SelectedItem is string;
+        bool hasSelection = _listView.SelectedItems.Count > 0;
         _editButton.Enabled = hasSelection;
         _deleteButton.Enabled = hasSelection;
     }
 }
-

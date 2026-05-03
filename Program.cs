@@ -33,6 +33,7 @@ static class Program
         services.AddSingleton<IGoogleFirestoreSession, GoogleFirestoreSession>();
         services.AddSingleton<FirestoreEventGateway>();
         services.AddSingleton<ProjectsRepository>();
+        services.AddSingleton<InvoiceConfirmationsRepository>();
         services.AddSingleton<IEventQueue>(_ => new FileEventQueue(Path.Combine(appData, "event-queue.json")));
         services.AddSingleton<BackgroundSyncWorker>();
         services.AddSingleton<DeviceIdentityProvider>();

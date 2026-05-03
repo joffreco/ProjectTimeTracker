@@ -1,4 +1,5 @@
 using Google.Cloud.Firestore;
+using ProjectTimeTracker.Domain;
 
 namespace ProjectTimeTracker.Infrastructure;
 
@@ -20,7 +21,7 @@ public sealed class ProjectsRepository : IDisposable
         _userId = userId;
     }
 
-    public async Task<IReadOnlyList<string>> ReadAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<ProjectDefinition>> ReadAsync(CancellationToken cancellationToken)
     {
         if (!IsConnected)
         {
@@ -33,7 +34,7 @@ public sealed class ProjectsRepository : IDisposable
         return MapItems(snapshot);
     }
 
-    public async Task SaveAsync(IEnumerable<string> projects, CancellationToken cancellationToken)
+    public async Task SaveAsync(IEnumerable<ProjectDefinition> projects, CancellationToken cancellationToken)
     {
         if (!IsConnected)
         {
@@ -43,11 +44,17 @@ public sealed class ProjectsRepository : IDisposable
         FirestoreDb db = await _session.CreateDbAsync(cancellationToken);
         DocumentReference doc = GetDocument(db, _userId!);
 
-        string[] items = projects
-            .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Select(p => p.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+        Dictionary<string, object?>[] items = projects
+            .Where(p => !string.IsNullOrWhiteSpace(p.Name))
+            .Select(p => new ProjectDefinition(p.Name.Trim(), p.IsInvoiceable))
+            .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(p => new Dictionary<string, object?>
+            {
+                ["name"] = p.Name,
+                ["invoiceable"] = p.IsInvoiceable
+            })
             .ToArray();
 
         await doc.SetAsync(new Dictionary<string, object?>
@@ -57,7 +64,7 @@ public sealed class ProjectsRepository : IDisposable
         }, SetOptions.Overwrite, cancellationToken);
     }
 
-    public async Task StartListeningAsync(Action<IReadOnlyList<string>> onChanged, CancellationToken cancellationToken)
+    public async Task StartListeningAsync(Action<IReadOnlyList<ProjectDefinition>> onChanged, CancellationToken cancellationToken)
     {
         if (!IsConnected)
         {
@@ -85,23 +92,50 @@ public sealed class ProjectsRepository : IDisposable
     private static DocumentReference GetDocument(FirestoreDb db, string userId) =>
         db.Collection("timeTrackerUsers").Document(userId).Collection("state").Document("projects");
 
-    private static IReadOnlyList<string> MapItems(DocumentSnapshot snapshot)
+    private static IReadOnlyList<ProjectDefinition> MapItems(DocumentSnapshot snapshot)
     {
         if (!snapshot.Exists)
         {
             return [];
         }
 
-        if (!snapshot.TryGetValue("items", out List<string>? items) || items is null)
+        if (!snapshot.TryGetValue("items", out List<object>? raw) || raw is null)
         {
             return [];
         }
 
-        return items
-            .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Select(p => p.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+        List<ProjectDefinition> result = new();
+        foreach (object item in raw)
+        {
+            switch (item)
+            {
+                case string s when !string.IsNullOrWhiteSpace(s):
+                    // Legacy format: plain project name → not invoiceable.
+                    result.Add(new ProjectDefinition(s.Trim(), false));
+                    break;
+                case IDictionary<string, object> map:
+                    if (map.TryGetValue("name", out object? nameObj) && nameObj is string name && !string.IsNullOrWhiteSpace(name))
+                    {
+                        bool invoiceable = false;
+                        if (map.TryGetValue("invoiceable", out object? invObj))
+                        {
+                            invoiceable = invObj switch
+                            {
+                                bool b => b,
+                                string sb => bool.TryParse(sb, out bool parsed) && parsed,
+                                _ => false
+                            };
+                        }
+                        result.Add(new ProjectDefinition(name.Trim(), invoiceable));
+                    }
+                    break;
+            }
+        }
+
+        return result
+            .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 
@@ -110,4 +144,3 @@ public sealed class ProjectsRepository : IDisposable
         _ = StopListeningAsync();
     }
 }
-
